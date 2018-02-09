@@ -1,0 +1,25 @@
+
+#osm_header{
+        display: block;
+        position: relative;
+        top: 0px;
+        left: 160px;
+        margin-bottom: -60px;
+        width: 140px;
+        padding-left: 17px;
+    }
+#osm_topmenu {
+        background: none;
+        position: relative;
+        top: 0px;
+        left: 10px;
+        margin-right: 10px;
+}
+#osm_error_message {
+        padding: 5px;
+        margin: 2em;
+        width: 200em;
+        color: red;
+        font-weight: bold;
+}
+

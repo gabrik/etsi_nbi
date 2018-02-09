@@ -1,0 +1,5 @@
+#include MANIFEST.in
+#include requirements.txt
+include README.rst
+recursive-include osm_nbi *
+
