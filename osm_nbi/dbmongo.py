@@ -21,6 +21,7 @@ __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 #                 sleep(retry)
 #     return _retry_mongocall
 
+
 class DbMongo(DbBase):
     conn_initial_timout = 120
     conn_timout = 10
@@ -63,7 +64,7 @@ class DbMongo(DbBase):
                                                                "ncont", "neq"):
                     operator = "$" + query_k[dot_index+1:]
                     if operator == "$neq":
-                        operator = "$nq"
+                        operator = "$ne"
                     k = query_k[:dot_index]
                 else:
                     operator = "$eq"
@@ -97,7 +98,6 @@ class DbMongo(DbBase):
             raise DbException("Invalid query string filter at {}:{}. Error: {}".format(query_k, v, e),
                               http_code=HTTPStatus.BAD_REQUEST)
 
-
     def get_list(self, table, filter={}):
         try:
             l = []
@@ -121,11 +121,12 @@ class DbMongo(DbBase):
             rows = collection.find(filter)
             if rows.count() == 0:
                 if fail_on_empty:
-                    raise DbException("Not found entry with filter='{}'".format(filter), HTTPStatus.NOT_FOUND)
+                    raise DbException("Not found any {} with filter='{}'".format(table[:-1], filter),
+                                      HTTPStatus.NOT_FOUND)
                 return None
             elif rows.count() > 1:
                 if fail_on_more:
-                    raise DbException("Found more than one entry with filter='{}'".format(filter),
+                    raise DbException("Found more than one {} with filter='{}'".format(table[:-1], filter),
                                       HTTPStatus.CONFLICT)
             return rows[0]
         except Exception as e:  # TODO refine
@@ -147,7 +148,8 @@ class DbMongo(DbBase):
             rows = collection.delete_one(self._format_filter(filter))
             if rows.deleted_count == 0:
                 if fail_on_empty:
-                    raise DbException("Not found entry with filter='{}'".format(filter), HTTPStatus.NOT_FOUND)
+                    raise DbException("Not found any {} with filter='{}'".format(table[:-1], filter),
+                                      HTTPStatus.NOT_FOUND)
                 return None
             return {"deleted": rows.deleted_count}
         except Exception as e:  # TODO refine
@@ -167,7 +169,8 @@ class DbMongo(DbBase):
             rows = collection.update_one(self._format_filter(filter), {"$set": update_dict})
             if rows.updated_count == 0:
                 if fail_on_empty:
-                    raise DbException("Not found entry with filter='{}'".format(filter), HTTPStatus.NOT_FOUND)
+                    raise DbException("Not found any {} with filter='{}'".format(table[:-1], filter),
+                                      HTTPStatus.NOT_FOUND)
                 return None
             return {"deleted": rows.deleted_count}
         except Exception as e:  # TODO refine
@@ -179,7 +182,8 @@ class DbMongo(DbBase):
             rows = collection.replace_one({"_id": id}, indata)
             if rows.modified_count == 0:
                 if fail_on_empty:
-                    raise DbException("Not found entry with filter='{}'".format(filter), HTTPStatus.NOT_FOUND)
+                    raise DbException("Not found any {} with filter='{}'".format(table[:-1], filter),
+                                      HTTPStatus.NOT_FOUND)
                 return None
             return {"replace": rows.modified_count}
         except Exception as e:  # TODO refine

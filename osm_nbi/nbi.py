@@ -9,49 +9,63 @@ import html_out as html
 import logging
 from engine import Engine, EngineException
 from dbbase import DbException
+from fsbase import FsException
 from base64 import standard_b64decode
-from os import getenv
+#from os import getenv
 from http import HTTPStatus
-from http.client import responses as http_responses
+#from http.client import responses as http_responses
 from codecs import getreader
 from os import environ
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
-__version__ = "0.1"
-version_date = "Feb 2018"
+__version__ = "0.2"
+version_date = "Mar 2018"
 
 """
-North Bound Interface  (O: OSM; S: SOL5
+North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
 URL: /osm                                                       GET     POST    PUT     DELETE  PATCH
-        /nsd/v1
+        /nsd/v1                                                 O       O
+            /ns_descriptors_content                             O       O       
+                /<nsdInfoId>                                    O       O       O       O     
             /ns_descriptors                                     O5      O5
                 /<nsdInfoId>                                    O5                      O5      5
                     /nsd_content                                O5              O5
+                    /nsd                                        O
+                    /artifacts[/<artifactPath>]                 O
             /pnf_descriptors                                    5       5
                 /<pnfdInfoId>                                   5                       5       5
                     /pnfd_content                               5               5
-            /subcriptions                                       5       5
-                /<subcriptionId>                                5                       X
+            /subscriptions                                      5       5
+                /<subscriptionId>                               5                       X
 
         /vnfpkgm/v1
             /vnf_packages                                       O5      O5
                 /<vnfPkgId>                                     O5                      O5      5
-                    /vnfd                                       O5      O
                     /package_content                            O5               O5
                         /upload_from_uri                                X
-                    /artifacts/<artifactPatch                   X
-            /subcriptions                                       X       X
-                /<subcriptionId>                                X                       X
+                    /vnfd                                       O5
+                    /artifacts[/<artifactPath>]                 O5
+            /subscriptions                                      X       X
+                /<subscriptionId>                               X                       X
 
         /nslcm/v1
-            /ns_instances                                       O5      O5
-                /<nsInstanceId>                                 O5                      O5     
+            /ns_instances_content                               O       O
+                /<nsInstanceId>                                 O                       O     
+            /ns_instances                                       5       5
+                /<nsInstanceId>                                 5                       5     
                     TO BE COMPLETED                             
             /ns_lcm_op_occs                                     5       5
                 /<nsLcmOpOccId>                                 5                       5       5
                     TO BE COMPLETED                             5               5
-            /subcriptions                                       5       5
-                /<subcriptionId>                                5                       X
+            /subscriptions                                      5       5
+                /<subscriptionId>                               5                       X
+        /admin/v1
+            /tokens                                             O       O
+                /<id>                                           O                       O     
+            /users                                              O       O
+                /<id>                                           O                       O     
+            /projects                                           O       O
+                /<id>                                           O                       O     
 
 query string.
     <attrName>[.<attrName>...]*[.<op>]=<value>[,<value>...]&...
@@ -106,6 +120,74 @@ class Server(object):
     def __init__(self):
         self.instance += 1
         self.engine = Engine()
+        self.valid_methods = {   # contains allowed URL and methods
+            "admin": {
+                "v1": {
+                    "tokens": { "METHODS": ("GET", "POST", "DELETE"),
+                        "<ID>": { "METHODS": ("GET", "DELETE")}
+                    },
+                    "users": { "METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
+                    },
+                    "projects": { "METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
+                    },
+                }
+            },
+            "nsd": {
+                "v1": {
+                    "ns_descriptors_content": { "METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
+                    },
+                    "ns_descriptors": { "METHODS": ("GET", "POST"),
+                        "<ID>": { "METHODS": ("GET", "DELETE"), "TODO": "PATCH",
+                            "nsd_content": { "METHODS": ("GET", "PUT")},
+                            "nsd": {"METHODS": "GET"},  # descriptor inside package
+                            "artifacts": {"*": {"METHODS": "GET"}}
+                        }
+
+                    },
+                    "pnf_descriptors": {"TODO": ("GET", "POST"),
+                       "<ID>": {"TODO": ("GET", "DELETE", "PATCH"),
+                            "pnfd_content": {"TODO": ("GET", "PUT")}
+                        }
+                    },
+                    "subscriptions": {"TODO": ("GET", "POST"),
+                        "<ID>": {"TODO": ("GET", "DELETE"),}
+                    },
+                }
+            },
+            "vnfpkgm": {
+                "v1": {
+                    "vnf_packages_content": { "METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
+                    },
+                    "vnf_packages": { "METHODS": ("GET", "POST"),
+                        "<ID>": { "METHODS": ("GET", "DELETE"), "TODO": "PATCH",  # GET: vnfPkgInfo
+                            "package_content": { "METHODS": ("GET", "PUT"),         # package
+                                "upload_from_uri": {"TODO": "POST"}
+                            },
+                            "vnfd": {"METHODS": "GET"},                    # descriptor inside package
+                            "artifacts": {"*": {"METHODS": "GET"}}
+                        }
+
+                    },
+                    "subscriptions": {"TODO": ("GET", "POST"),
+                        "<ID>": {"TODO": ("GET", "DELETE"),}
+                    },
+                }
+            },
+            "nslcm": {
+                "v1": {
+                    "ns_instances_content": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                    },
+                    "ns_instances": {"TODO": ("GET", "POST"),
+                        "<ID>": {"TODO": ("GET", "DELETE")}
+                    }
+                }
+            },
+        }
 
     def _authorization(self):
         token = None
@@ -164,14 +246,15 @@ class Server(object):
                         indata = yaml.load(cherrypy.request.body)
                     elif "application/binary" in cherrypy.request.headers["Content-Type"] or \
                          "application/gzip" in cherrypy.request.headers["Content-Type"] or \
-                         "application/zip" in cherrypy.request.headers["Content-Type"]:
-                        indata = cherrypy.request.body.read()
+                         "application/zip" in cherrypy.request.headers["Content-Type"] or \
+                         "text/plain" in cherrypy.request.headers["Content-Type"]:
+                        indata = cherrypy.request.body  # .read()
                     elif "multipart/form-data" in cherrypy.request.headers["Content-Type"]:
                         if "descriptor_file" in kwargs:
                             filecontent = kwargs.pop("descriptor_file")
                             if not filecontent.file:
                                 raise NbiException("empty file or content", HTTPStatus.BAD_REQUEST)
-                            indata = filecontent.file.read()
+                            indata = filecontent.file  # .read()
                             if filecontent.content_type.value:
                                 cherrypy.request.headers["Content-Type"] = filecontent.content_type.value
                     else:
@@ -186,10 +269,6 @@ class Server(object):
             if not indata:
                 indata = {}
 
-            if "METHOD" in kwargs:
-                method = kwargs.pop("METHOD")
-            else:
-                method = cherrypy.request.method
             format_yaml = False
             if cherrypy.request.headers.get("Query-String-Format") == "yaml":
                 format_yaml = True
@@ -223,20 +302,33 @@ class Server(object):
                             except:
                                 pass
 
-            return indata, method
+            return indata
         except (ValueError, yaml.YAMLError) as exc:
             raise NbiException(error_text + str(exc), HTTPStatus.BAD_REQUEST)
         except KeyError as exc:
             raise NbiException("Query string error: " + str(exc), HTTPStatus.BAD_REQUEST)
 
     @staticmethod
-    def _format_out(data, session=None):
+    def _format_out(data, session=None, _format=None):
         """
         return string of dictionary data according to requested json, yaml, xml. By default json
-        :param data: response to be sent. Can be a dict or text
+        :param data: response to be sent. Can be a dict, text or file
         :param session:
+        :param _format: The format to be set as Content-Type ir data is a file
         :return: None
         """
+        if data is None:
+            cherrypy.response.status = HTTPStatus.NO_CONTENT.value
+            return
+        elif hasattr(data, "read"):  # file object
+            if _format:
+                cherrypy.response.headers["Content-Type"] = _format
+            elif "b" in data.mode:  # binariy asssumig zip
+                cherrypy.response.headers["Content-Type"] = 'application/zip'
+            else:
+                cherrypy.response.headers["Content-Type"] = 'text/plain'
+            # TODO check that cherrypy close file. If not implement pending things to close  per thread next
+            return data
         if "Accept" in cherrypy.request.headers:
             accept = cherrypy.request.headers["Accept"]
             if "application/json" in accept:
@@ -246,7 +338,7 @@ class Server(object):
             elif "text/html" in accept:
                 return html.format(data, cherrypy.request, cherrypy.response, session)
 
-            elif "application/yaml" in accept or "*/*" in accept:
+            elif "application/yaml" in accept or "*/*" in accept or "text/plain" in accept:
                 pass
             else:
                 raise cherrypy.HTTPError(HTTPStatus.NOT_ACCEPTABLE.value,
@@ -275,20 +367,17 @@ class Server(object):
             return self._format_out("Welcome to OSM!", session)
 
     @cherrypy.expose
-    def token(self, *args, **kwargs):
-        if not args:
-            raise NbiException("URL must contain at least 'item/version'", HTTPStatus.METHOD_NOT_ALLOWED)
-        version = args[0]
-        if version != 'v1':
-            raise NbiException("URL version '{}' not supported".format(version), HTTPStatus.METHOD_NOT_ALLOWED)
+    def token(self, method, token_id=None, kwargs=None):
         session = None
         # self.engine.load_dbase(cherrypy.request.app.config)
+        indata = self._format_in(kwargs)
+        if not isinstance(indata, dict):
+            raise NbiException("Expected application/yaml or application/json Content-Type", HTTPStatus.BAD_REQUEST)
         try:
-            indata, method = self._format_in(kwargs)
             if method == "GET":
                 session = self._authorization()
-                if len(args) >= 2:
-                    outdata = self.engine.get_token(session, args[1])
+                if token_id:
+                    outdata = self.engine.get_token(session, token_id)
                 else:
                     outdata = self.engine.get_token_list(session)
             elif method == "POST":
@@ -304,11 +393,9 @@ class Server(object):
                 # cherrypy.response.cookie["Authorization"] = outdata["id"]
                 # cherrypy.response.cookie["Authorization"]['expires'] = 3600
             elif method == "DELETE":
-                if len(args) >= 2 and "logout" not in args:
-                    token_id = args[1]
-                elif "id" in kwargs:
+                if not token_id and "id" in kwargs:
                     token_id = kwargs["id"]
-                else:
+                elif not token_id:
                     session = self._authorization()
                     token_id = session["_id"]
                 outdata = self.engine.del_token(token_id)
@@ -330,9 +417,20 @@ class Server(object):
             return self._format_out(problem_details, session)
 
     @cherrypy.expose
+    def test2(self, args0=None, args1=None, args2=None, args3=None, *args, **kwargs):
+        return_text = (
+            "<html><pre>\n{} {} {} {} {} {} \n".format(args0, args1, args2, args3, args, kwargs))
+        return_text += "</pre></html>"
+        return return_text
+
+    @cherrypy.expose
     def test(self, *args, **kwargs):
         thread_info = None
-        if args and args[0] == "init":
+        if args and args[0] == "help":
+            return "<html><pre>\ninit\nfile/<name>  download file\ndb-clear/table\nprune\nlogin\nlogin2\n"\
+                    "sleep/<time>\n</pre></html>"
+
+        elif args and args[0] == "init":
             try:
                 # self.engine.load_dbase(cherrypy.request.app.config)
                 self.engine.create_admin()
@@ -340,6 +438,17 @@ class Server(object):
             except Exception:
                 cherrypy.response.status = HTTPStatus.FORBIDDEN.value
                 return self._format_out("Database already initialized")
+        elif args and args[0] == "file":
+            return cherrypy.lib.static.serve_file(cherrypy.tree.apps['/osm'].config["storage"]["path"] + "/" + args[1],
+                                                  "text/plain", "attachment")
+        elif args and args[0] == "file2":
+            f_path = cherrypy.tree.apps['/osm'].config["storage"]["path"] + "/" + args[1]
+            f = open(f_path, "r")
+            cherrypy.response.headers["Content-type"] = "text/plain"
+
+            return f
+        elif len(args) == 2 and args[0] == "db-clear":
+            return self.engine.del_item_list({"project_id": "admin"}, args[1], {})
         elif args and args[0] == "prune":
             return self.engine.prune()
         elif args and args[0] == "login":
@@ -390,83 +499,148 @@ class Server(object):
         return_text += "</pre></html>"
         return return_text
 
+    def _check_valid_url_method(self, method, *args):
+        if len(args) < 3:
+            raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
+
+        reference = self.valid_methods
+        for arg in args:
+            if arg is None:
+                break
+            if not isinstance(reference, dict):
+                raise NbiException("URL contains unexpected extra items '{}'".format(arg),
+                                   HTTPStatus.METHOD_NOT_ALLOWED)
+
+            if arg in reference:
+                reference = reference[arg]
+            elif "<ID>" in reference:
+                reference = reference["<ID>"]
+            elif "*" in reference:
+                reference = reference["*"]
+                break
+            else:
+                raise NbiException("Unexpected URL item {}".format(arg), HTTPStatus.METHOD_NOT_ALLOWED)
+        if "TODO" in reference and method in reference["TODO"]:
+            raise NbiException("Method {} not supported yet for this URL".format(method), HTTPStatus.NOT_IMPLEMENTED)
+        elif "METHODS" in reference and not method in reference["METHODS"]:
+            raise NbiException("Method {} not supported for this URL".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
+        return
+
+    @staticmethod
+    def _set_location_header(topic, version, item, id):
+        """
+        Insert response header Location with the URL of created item base on URL params
+        :param topic:
+        :param version:
+        :param item:
+        :param id:
+        :return: None
+        """
+        # Use cherrypy.request.base for absoluted path and make use of request.header HOST just in case behind aNAT
+        cherrypy.response.headers["Location"] = "/osm/{}/{}/{}/{}".format(topic, version, item, id)
+        return
+
     @cherrypy.expose
-    def default(self, *args, **kwargs):
+    def default(self, topic=None, version=None, item=None, _id=None, item2=None, *args, **kwargs):
         session = None
+        outdata = None
+        _format = None
         try:
-            if not args or len(args) < 2:
-                raise NbiException("URL must contain at least 'item/version'", HTTPStatus.METHOD_NOT_ALLOWED)
-            item = args[0]
-            version = args[1]
-            if item not in ("token", "user", "project", "vnfpkgm", "nsd", "nslcm"):
-                raise NbiException("URL item '{}' not supported".format(item), HTTPStatus.METHOD_NOT_ALLOWED)
+            if not topic or not version or not item:
+                raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
+            if topic not in ("admin", "vnfpkgm", "nsd", "nslcm"):
+                raise NbiException("URL topic '{}' not supported".format(topic), HTTPStatus.METHOD_NOT_ALLOWED)
             if version != 'v1':
                 raise NbiException("URL version '{}' not supported".format(version), HTTPStatus.METHOD_NOT_ALLOWED)
 
+            if kwargs and "METHOD" in kwargs and kwargs["METHOD"] in ("PUT", "POST", "DELETE", "GET", "PATCH"):
+                method = kwargs.pop("METHOD")
+            else:
+                method = cherrypy.request.method
+
+            self._check_valid_url_method(method, topic, version, item, _id, item2, *args)
+
+            if topic == "admin" and item == "tokens":
+                return self.token(method, _id, kwargs)
+
             # self.engine.load_dbase(cherrypy.request.app.config)
             session = self._authorization()
-            indata, method = self._format_in(kwargs)
-            _id = None
+            indata = self._format_in(kwargs)
+            engine_item = item
+            if item == "subscriptions":
+                engine_item = topic + "_" + item
+            if item2:
+                engine_item = item2
 
-            if item == "nsd":
-                item = "nsds"
-                if len(args) < 3 or args[2] != "ns_descriptors":
-                    raise NbiException("only ns_descriptors is allowed", HTTPStatus.METHOD_NOT_ALLOWED)
-                if len(args) > 3:
-                    _id = args[3]
-                if len(args) > 4 and args[4] != "nsd_content":
-                    raise NbiException("only nsd_content is allowed", HTTPStatus.METHOD_NOT_ALLOWED)
-            elif item == "vnfpkgm":
-                item = "vnfds"
-                if len(args) < 3 or args[2] != "vnf_packages":
-                    raise NbiException("only vnf_packages is allowed", HTTPStatus.METHOD_NOT_ALLOWED)
-                if len(args) > 3:
-                    _id = args[3]
-                if len(args) > 4 and args[4] not in ("vnfd", "package_content"):
-                    raise NbiException("only vnfd or package_content are allowed", HTTPStatus.METHOD_NOT_ALLOWED)
-            elif item == "nslcm":
-                item = "nsrs"
-                if len(args) < 3 or args[2] != "ns_instances":
-                    raise NbiException("only ns_instances is allowed", HTTPStatus.METHOD_NOT_ALLOWED)
-                if len(args) > 3:
-                    _id = args[3]
-                if len(args) > 4:
-                    raise NbiException("This feature is not implemented", HTTPStatus.METHOD_NOT_ALLOWED)
-            else:
-                if len(args) >= 3:
-                    _id = args[2]
-                item += "s"
+            if topic == "nsd":
+                engine_item = "nsds"
+            elif topic == "vnfpkgm":
+                engine_item = "vnfds"
+            elif topic == "nslcm":
+                engine_item = "nsrs"
 
             if method == "GET":
-                if not _id:
-                    outdata = self.engine.get_item_list(session, item, kwargs)
-                else:  # len(args) > 1
-                    outdata = self.engine.get_item(session, item, _id)
-            elif method == "POST":
-                id, completed = self.engine.new_item(session, item, indata, kwargs, cherrypy.request.headers)
-                if not completed:
-                    cherrypy.response.headers["Transaction-Id"] = id
-                    cherrypy.response.status = HTTPStatus.CREATED.value
+                if item2 in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
+                    if item2 in ("vnfd", "nsd"):
+                        path = "$DESCRIPTOR"
+                    elif args:
+                        path = args
+                    elif item2 == "artifacts":
+                        path = ()
+                    else:
+                        path = None
+                    file, _format = self.engine.get_file(session, engine_item, _id, path,
+                                                            cherrypy.request.headers.get("Accept"))
+                    outdata = file
+                elif not _id:
+                    outdata = self.engine.get_item_list(session, engine_item, kwargs)
                 else:
-                    cherrypy.response.headers["Location"] = cherrypy.request.base + "/osm/" + "/".join(args[0:3]) + "/" + id
-                outdata = {"id": id}
+                    outdata = self.engine.get_item(session, engine_item, _id)
+            elif method == "POST":
+                if item in ("ns_descriptors_content", "vnf_packages_content"):
+                    _id = cherrypy.request.headers.get("Transaction-Id")
+                    if not _id:
+                        _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers)
+                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
+                    if completed:
+                        self._set_location_header(topic, version, item, _id)
+                    else:
+                        cherrypy.response.headers["Transaction-Id"] = _id
+                    outdata = {"id": _id}
+                elif item in ("ns_descriptors", "vnf_packages"):
+                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers)
+                    self._set_location_header(topic, version, item, _id)
+                    #TODO form NsdInfo
+                    outdata = {"id": _id}
+                else:
+                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers)
+                    self._set_location_header(topic, version, item, _id)
+                    outdata = {"id": _id}
+                cherrypy.response.status = HTTPStatus.CREATED.value
             elif method == "DELETE":
                 if not _id:
-                    outdata = self.engine.del_item_list(session, item, kwargs)
+                    outdata = self.engine.del_item_list(session, engine_item, kwargs)
                 else:  # len(args) > 1
-                    outdata = self.engine.del_item(session, item, _id)
+                    outdata = self.engine.del_item(session, engine_item, _id)
+                if item in ("ns_descriptors", "vnf_packages"):  # SOL005
+                    outdata = None
             elif method == "PUT":
-                if not _id:
-                    raise NbiException("Missing '/<id>' at the URL to identify item to be updated",
-                                       HTTPStatus.METHOD_NOT_ALLOWED)
-                elif not indata and not kwargs:
+                if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
-                outdata = {"id": self.engine.edit_item(session, item, args[1], indata, kwargs)}
+                if item2 in ("nsd_content", "package_content"):
+                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
+                    if not completed:
+                        cherrypy.response.headers["Transaction-Id"] = id
+                    outdata = None
+                else:
+                    outdata = {"id": self.engine.edit_item(session, engine_item, args[1], indata, kwargs)}
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
-            return self._format_out(outdata, session)
-        except (NbiException, EngineException, DbException) as e:
+            return self._format_out(outdata, session, _format)
+        except (NbiException, EngineException, DbException, FsException) as e:
+            if hasattr(outdata, "close"):  # is an open file
+                outdata.close()
             cherrypy.log("Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             problem_details = {

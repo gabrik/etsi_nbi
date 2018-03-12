@@ -19,13 +19,13 @@ html_start = """
     <div>
       <a href="https://osm.etsi.org"> <img src="/osm/static/OSM-logo.png" height="42" width="100" style="vertical-align:middle"> </a>
       <a>( {} )</a>
-      <a href="/osm/vnfpkgm/v1/vnf_packages">VNFDs </a>
-      <a href="/osm/nsd/v1/ns_descriptors">NSDs </a>
-      <a href="/osm/nslcm/v1/ns_instances">NSs </a>
-      <a href="/osm/user/v1">USERs </a>
-      <a href="/osm/project/v1">PROJECTs </a>
-      <a href="/osm/token/v1">TOKENs </a>
-      <a href="/osm/token/v1?METHOD=DELETE">logout </a>
+      <a href="/osm/vnfpkgm/v1/vnf_packages_content">VNFDs </a>
+      <a href="/osm/nsd/v1/ns_descriptors_content">NSDs </a>
+      <a href="/osm/nslcm/v1/ns_instances_content">NSs </a>
+      <a href="/osm/admin/v1/users">USERs </a>
+      <a href="/osm/admin/v1/projects">PROJECTs </a>
+      <a href="/osm/admin/v1/tokens">TOKENs </a>
+      <a href="/osm/admin/v1/tokens?METHOD=DELETE">logout </a>
     </div>
   </div>
 """
@@ -61,7 +61,7 @@ html_auth2 = """
   </div>
   <div class="gerritBody" id="osm_body">
     <h1>Sign in to OSM</h1>
-    <form action="/osm/token/v1" id="login_form" method="POST">
+    <form action="/osm/admin/v1/tokens" id="login_form" method="POST">
       <table style="border: 0;">
         <tr><th>Username</th><td><input id="f_user" name="username" size="25" tabindex="1" type="text"></td></tr>
         <tr><th>Password</th><td><input id="f_pass" name="password" size="25" tabindex="2" type="password"></td></tr>
@@ -108,12 +108,15 @@ def format(data, request, response, session):
     if response.status and response.status > 202:
         body += html_body_error.format(yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False))
     elif isinstance(data, (list, tuple)):
-        if request.path_info == "/vnfpkgm/v1/vnf_packages":
+        if request.path_info == "/vnfpkgm/v1/vnf_packages_content":
             body += html_upload_body.format("VNFD", request.path_info)
-        elif request.path_info == "/nsd/v1/ns_descriptors":
+        elif request.path_info == "/nsd/v1/ns_descriptors_content":
             body += html_upload_body.format("NSD", request.path_info)
         for k in data:
-            data_id = k.pop("_id", None)
+            if isinstance(k, dict):
+                data_id = k.pop("_id", None)
+            elif isinstance(k, str):
+                data_id = k
             body += '<p> <a href="/osm/{url}/{id}">{id}</a>: {t} </p>'.format(url=request.path_info, id=data_id, t=k)
     elif isinstance(data, dict):
         if "Location" in response.headers:
