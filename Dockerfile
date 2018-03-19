@@ -6,7 +6,7 @@ WORKDIR /app/osm_nbi
 # Copy the current directory contents into the container at /app
 ADD . /app
 
-RUN apt-get update && apt-get -y install git  python3 \
+RUN apt-get update && apt-get -y install git  python3 python3-jsonschema \
     python3-cherrypy3 python3-pymongo python3-yaml python3-pip \
     && pip3 install aiokafka \
     && mkdir -p /app/storage/kafka && mkdir -p /app/log 

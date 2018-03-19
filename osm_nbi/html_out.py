@@ -109,9 +109,9 @@ def format(data, request, response, session):
         body += html_body_error.format(yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False))
     elif isinstance(data, (list, tuple)):
         if request.path_info == "/vnfpkgm/v1/vnf_packages_content":
-            body += html_upload_body.format("VNFD", request.path_info)
+            body += html_upload_body.format(request.path_info, "VNFD")
         elif request.path_info == "/nsd/v1/ns_descriptors_content":
-            body += html_upload_body.format("NSD", request.path_info)
+            body += html_upload_body.format(request.path_info, "NSD")
         for k in data:
             if isinstance(k, dict):
                 data_id = k.pop("_id", None)
@@ -124,6 +124,9 @@ def format(data, request, response, session):
         else:
             body += '<a href="/osm/{}?METHOD=DELETE"> <img src="/osm/static/delete.png" height="25" width="25"> </a>'.format(request.path_info)
         body += "<pre>" + yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False) + "</pre>"
+    elif data is None:
+        if request.method == "DELETE" or "METHOD=DELETE" in request.query_string:
+            body += "<pre> deleted </pre>"
     else:
         body = str(data)
     user_text = "    "

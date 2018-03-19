@@ -18,6 +18,7 @@ from msgbase import MsgException
 from http import HTTPStatus
 from time import time
 from copy import deepcopy
+from validation import validate_input, ValidationError
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -276,6 +277,11 @@ class Engine(object):
 
         elif item == "nsrs":
             pass
+        elif item == "vims" or item == "sdns":
+            if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
+                raise EngineException("name '{}' already exist for {}".format(indata["name"], item),
+                                      HTTPStatus.CONFLICT)
+
 
     def _format_new_data(self, session, item, indata, admin=None):
         now = time()
@@ -306,6 +312,9 @@ class Engine(object):
                 indata["_admin"]["onboardingState"] = "CREATED"
                 indata["_admin"]["operationalState"] = "DISABLED"
                 indata["_admin"]["usageSate"] = "NOT_IN_USE"
+            elif item in ("vims", "sdns"):
+                indata["_admin"]["operationalState"] = "PROCESSING"
+
             if storage:
                 indata["_admin"]["storage"] = storage
         indata["_id"] = _id
@@ -500,25 +509,14 @@ class Engine(object):
         Creates a new entry into database. For nsds and vnfds it creates an almost empty DISABLED  entry,
         that must be completed with a call to method upload_content
         :param session: contains the used login username and working project
-        :param item: it can be: users, projects, nsrs, nsds, vnfds
+        :param item: it can be: users, projects, vims, sdns, nsrs, nsds, vnfds
         :param indata: data to be inserted
         :param kwargs: used to override the indata descriptor
         :param headers: http request headers
         :return: _id, transaction_id: identity of the inserted data. or transaction_id if Content-Range is used
         """
-        # TODO validate input. Check not exist at database
-        # TODO add admin and status
 
         transaction = None
-        # if headers.get("Content-Range") or "application/gzip" in headers.get("Content-Type") or \
-        #     "application/x-gzip" in headers.get("Content-Type") or "application/zip" in headers.get("Content-Type") or \
-        #     "text/plain" in headers.get("Content-Type"):
-        #     if not indata:
-        #         raise EngineException("Empty payload")
-        #     transaction = self._new_item_partial(session, item, indata, headers)
-        #     if "desc" not in transaction:
-        #         return transaction["_id"], False
-        #     indata = transaction["desc"]
 
         item_envelop = item
         if item in ("nsds", "vnfds"):
@@ -552,6 +550,11 @@ class Engine(object):
             except IndexError:
                 raise EngineException(
                     "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
+        try:
+            validate_input(content, item, new=True)
+        except ValidationError as e:
+            raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
+
         if not indata and item not in ("nsds", "vnfds"):
             raise EngineException("Empty payload")
 
@@ -568,6 +571,14 @@ class Engine(object):
         _id = self.db.create(item, content)
         if item == "nsrs":
             self.msg.write("ns", "create", _id)
+        elif item == "vims":
+            msg_data = self.db.get_one(item, {"_id": _id})
+            msg_data.pop("_admin", None)
+            self.msg.write("vim_account", "create", msg_data)
+        elif item == "sdns":
+            msg_data = self.db.get_one(item, {"_id": _id})
+            msg_data.pop("_admin", None)
+            self.msg.write("sdn", "create", msg_data)
         return _id
 
     def _add_read_filter(self, session, item, filter):
@@ -645,7 +656,6 @@ class Engine(object):
                                       "", http_code=HTTPStatus.NOT_ACCEPTABLE)
             return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), "application/zip"
 
-
     def get_item_list(self, session, item, filter={}):
         """
         Get a list of items
@@ -701,17 +711,20 @@ class Engine(object):
         filter = {"_id": _id}
         self._add_delete_filter(session, item, filter)
 
-        if item == "nsrs":
+        if item in ("nsrs", "vims", "sdns"):
             desc = self.db.get_one(item, filter)
             desc["_admin"]["to_delete"] = True
             self.db.replace(item, _id, desc)   # TODO change to set_one
-            self.msg.write("ns", "delete", _id)
-            return {"deleted": 1}
+            if item == "nsrs":
+                self.msg.write("ns", "delete", _id)
+            elif item == "vims":
+                self.msg.write("vim_account", "delete", {"_id": _id})
+            elif item == "sdns":
+                self.msg.write("sdn", "delete", {"_id": _id})
+            return {"deleted": 1}  # TODO indicate an offline operation to return 202 ACCEPTED
 
         v = self.db.del_one(item, filter)
         self.fs.file_delete(_id, ignore_non_exist=True)
-        if item == "nsrs":
-            self.msg.write("ns", "delete", _id)
         return v
 
     def prune(self):
@@ -766,11 +779,22 @@ class Engine(object):
             except IndexError:
                 raise EngineException(
                     "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
+        try:
+            validate_input(content, item, new=False)
+        except ValidationError as e:
+            raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
         _deep_update(content, indata)
         self._validate_new_data(session, item, content, id)
         # self._format_new_data(session, item, content)
         self.db.replace(item, id, content)
+        if item in ("vims", "sdns"):
+            indata.pop("_admin", None)
+            indata["_id"] = id
+            if item == "vims":
+                self.msg.write("vim_account", "edit", indata)
+            elif item == "sdns":
+                self.msg.write("sdn", "edit", indata)
         return id
 
     def edit_item(self, session, item, _id, indata={}, kwargs=None):

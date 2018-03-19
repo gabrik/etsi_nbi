@@ -23,7 +23,7 @@ setup(
                 ],
 
     install_requires=[
-        'CherryPy', 'pymongo'
+        'CherryPy', 'pymongo', 'jsonchema'
     ],
 #    setup_requires=['setuptools-version-command'],
     # test_suite='nose.collector',

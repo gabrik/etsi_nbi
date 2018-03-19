@@ -10,6 +10,7 @@ import logging
 from engine import Engine, EngineException
 from dbbase import DbException
 from fsbase import FsException
+from msgbase import MsgException
 from base64 import standard_b64decode
 #from os import getenv
 from http import HTTPStatus
@@ -18,7 +19,7 @@ from codecs import getreader
 from os import environ
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
-__version__ = "0.2"
+__version__ = "0.3"
 version_date = "Mar 2018"
 
 """
@@ -66,6 +67,10 @@ URL: /osm                                                       GET     POST    
                 /<id>                                           O                       O     
             /projects                                           O       O
                 /<id>                                           O                       O     
+            /vims                                               O       O
+                /<id>                                           O                       O       O     
+            /sdns                                               O       O
+                /<id>                                           O                       O       O     
 
 query string.
     <attrName>[.<attrName>...]*[.<op>]=<value>[,<value>...]&...
@@ -123,14 +128,20 @@ class Server(object):
         self.valid_methods = {   # contains allowed URL and methods
             "admin": {
                 "v1": {
-                    "tokens": { "METHODS": ("GET", "POST", "DELETE"),
+                    "tokens": {"METHODS": ("GET", "POST", "DELETE"),
                         "<ID>": { "METHODS": ("GET", "DELETE")}
                     },
-                    "users": { "METHODS": ("GET", "POST"),
+                    "users": {"METHODS": ("GET", "POST"),
                         "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
                     },
-                    "projects": { "METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
+                    "projects": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                    },
+                    "vims": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                    },
+                    "sdns": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "DELETE")}
                     },
                 }
             },
@@ -140,7 +151,7 @@ class Server(object):
                         "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
                     },
                     "ns_descriptors": { "METHODS": ("GET", "POST"),
-                        "<ID>": { "METHODS": ("GET", "DELETE"), "TODO": "PATCH",
+                        "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",
                             "nsd_content": { "METHODS": ("GET", "PUT")},
                             "nsd": {"METHODS": "GET"},  # descriptor inside package
                             "artifacts": {"*": {"METHODS": "GET"}}
@@ -317,7 +328,10 @@ class Server(object):
         :param _format: The format to be set as Content-Type ir data is a file
         :return: None
         """
+        accept = cherrypy.request.headers.get("Accept")
         if data is None:
+            if accept and "text/html" in accept:
+                return html.format(data, cherrypy.request, cherrypy.response, session)
             cherrypy.response.status = HTTPStatus.NO_CONTENT.value
             return
         elif hasattr(data, "read"):  # file object
@@ -329,8 +343,7 @@ class Server(object):
                 cherrypy.response.headers["Content-Type"] = 'text/plain'
             # TODO check that cherrypy close file. If not implement pending things to close  per thread next
             return data
-        if "Accept" in cherrypy.request.headers:
-            accept = cherrypy.request.headers["Accept"]
+        if accept:
             if "application/json" in accept:
                 cherrypy.response.headers["Content-Type"] = 'application/json; charset=utf-8'
                 a = json.dumps(data, indent=4) + "\n"
@@ -390,6 +403,7 @@ class Server(object):
                 outdata = self.engine.new_token(session, indata, cherrypy.request.remote)
                 session = outdata
                 cherrypy.session['Authorization'] = outdata["_id"]
+                self._set_location_header("admin", "v1", "tokens", outdata["_id"])
                 # cherrypy.response.cookie["Authorization"] = outdata["id"]
                 # cherrypy.response.cookie["Authorization"]['expires'] = 3600
             elif method == "DELETE":
@@ -399,6 +413,7 @@ class Server(object):
                     session = self._authorization()
                     token_id = session["_id"]
                 outdata = self.engine.del_token(token_id)
+                oudata = None
                 session = None
                 cherrypy.session['Authorization'] = "logout"
                 # cherrypy.response.cookie["Authorization"] = token_id
@@ -477,7 +492,7 @@ class Server(object):
                     self.engine.msg.write(topic, k, yaml.load(v))
                 return "ok"
             except Exception as e:
-                return "Error: " + format(e)
+                return "Error: " + str(e)
 
         return_text = (
             "<html><pre>\nheaders:\n  args: {}\n".format(args) +
@@ -545,6 +560,8 @@ class Server(object):
         session = None
         outdata = None
         _format = None
+        method = "DONE"
+        engine_item = None
         try:
             if not topic or not version or not item:
                 raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -621,8 +638,8 @@ class Server(object):
                 if not _id:
                     outdata = self.engine.del_item_list(session, engine_item, kwargs)
                 else:  # len(args) > 1
-                    outdata = self.engine.del_item(session, engine_item, _id)
-                if item in ("ns_descriptors", "vnf_packages"):  # SOL005
+                    # TODO return 202 ACCEPTED for nsrs vims
+                    self.engine.del_item(session, engine_item, _id)
                     outdata = None
             elif method == "PUT":
                 if not indata and not kwargs:
@@ -638,11 +655,15 @@ class Server(object):
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
-        except (NbiException, EngineException, DbException, FsException) as e:
+        except (NbiException, EngineException, DbException, FsException, MsgException) as e:
             if hasattr(outdata, "close"):  # is an open file
                 outdata.close()
             cherrypy.log("Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
+            error_text = str(e)
+            if isinstance(e, MsgException):
+                error_text = "{} has been '{}' but other modules cannot be informed because an error on bus".format(
+                    engine_item[:-1], method, error_text)
             problem_details = {
                 "code": e.http_code.name,
                 "status": e.http_code.value,
