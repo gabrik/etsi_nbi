@@ -44,6 +44,26 @@ log_level_schema = {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERRO
 checksum_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}
 size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
 
+
+ns_instantiate = {
+    "title": "ns action instantiate input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+}
+ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive execution
+    "title": "ns action update input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "vnf_member_index": name_schema,
+        "primitive": name_schema,
+        "primitive_params": {"type": "object"},
+    },
+    "required": ["vnf_member_index", "primitive", "primitive_params"],
+    "additionalProperties": False
+}
+
+
 schema_version = {"type": "string", "enum": ["1.0"]}
 schema_type = {"type": "string"}
 
@@ -153,7 +173,9 @@ sdn_external_port_schema = {
 
 nbi_new_input_schemas = {
     "vims": vim_new_schema,
-    "sdns": sdn_new_schema
+    "sdns": sdn_new_schema,
+    "ns_instantiate": ns_instantiate,
+    "ns_action": ns_action,
 }
 
 nbi_edit_input_schemas = {
@@ -170,7 +192,7 @@ def validate_input(indata, item, new=True):
     """
     Validates input data agains json schema
     :param indata: user input data. Should be a dictionary
-    :param item: can be users, projects, vims, sdns
+    :param item: can be users, projects, vims, sdns, ns_xxxxx
     :param new: True if the validation is for creating or False if it is for editing
     :return: None if ok, raises ValidationError exception otherwise
     """

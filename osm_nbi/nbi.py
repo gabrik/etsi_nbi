@@ -57,7 +57,11 @@ URL: /osm                                                       GET     POST    
                 /<nsInstanceId>                                 O                       O     
             /ns_instances                                       5       5
                 /<nsInstanceId>                                 5                       5     
-                    TO BE COMPLETED                             
+                    instantiate                                         O5
+                    terminate                                           O5
+                    action                                              O
+                    scale                                               O5
+                    heal                                                5
             /ns_lcm_op_occs                                     5       5
                 /<nsLcmOpOccId>                                 5                       5       5
                     TO BE COMPLETED                             5               5
@@ -196,8 +200,16 @@ class Server(object):
                     "ns_instances_content": {"METHODS": ("GET", "POST"),
                         "<ID>": {"METHODS": ("GET", "DELETE")}
                     },
-                    "ns_instances": {"TODO": ("GET", "POST"),
-                        "<ID>": {"TODO": ("GET", "DELETE")}
+                    "ns_instances": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"TODO": ("GET", "DELETE"),
+                             "scale": {"TODO": "POST"},
+                             "terminate": {"METHODS": "POST"},
+                             "instantiate": {"METHODS": "POST"},
+                             "action": {"METHODS": "POST"},
+                        }
+                    },
+                    "ns_lcm_op_occs": {"METHODS": "GET",
+                        "<ID>": {"METHODS": "GET"},
                     }
                 }
             },
@@ -618,6 +630,8 @@ class Server(object):
                 engine_item = "vnfds"
             elif topic == "nslcm":
                 engine_item = "nsrs"
+                if item == "ns_lcm_op_occs":
+                    engine_item = "nslcmops"
 
             if method == "GET":
                 if item2 in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
@@ -647,22 +661,32 @@ class Server(object):
                     else:
                         cherrypy.response.headers["Transaction-Id"] = _id
                     outdata = {"id": _id}
-                elif item in ("ns_descriptors", "vnf_packages"):
-                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers)
+                elif item == "ns_instances_content":
+                    _id = self.engine.new_item(session, engine_item, indata, kwargs)
+                    self.engine.ns_action(session, _id, "instantiate", {}, None)
                     self._set_location_header(topic, version, item, _id)
-                    #TODO form NsdInfo
                     outdata = {"id": _id}
+                elif item == "ns_instances" and item2:
+                    _id = self.engine.ns_action(session, _id, item2, indata, kwargs)
+                    self._set_location_header(topic, version, "ns_lcm_op_occs", _id)
+                    outdata = {"id": _id}
+                    cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 else:
                     _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
+                    # TODO form NsdInfo when item in ("ns_descriptors", "vnf_packages")
                 cherrypy.response.status = HTTPStatus.CREATED.value
             elif method == "DELETE":
                 if not _id:
                     outdata = self.engine.del_item_list(session, engine_item, kwargs)
                 else:  # len(args) > 1
+                    if item == "ns_instances_content":
+                        self.engine.ns_action(session, _id, "terminate", {"autoremove": True}, None)
+                    else:
+                        force = kwargs.get("FORCE")
+                        self.engine.del_item(session, engine_item, _id, force)
                     # TODO return 202 ACCEPTED for nsrs vims
-                    self.engine.del_item(session, engine_item, _id)
                     outdata = None
             elif method == "PUT":
                 if not indata and not kwargs:

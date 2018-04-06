@@ -25,6 +25,7 @@ html_start = """
       <a href="/osm/admin/v1/users">USERs </a>
       <a href="/osm/admin/v1/projects">PROJECTs </a>
       <a href="/osm/admin/v1/tokens">TOKENs </a>
+      <a href="/osm/admin/v1/vims">VIMs </a>
       <a href="/osm/admin/v1/tokens?METHOD=DELETE">logout </a>
     </div>
   </div>
@@ -88,6 +89,15 @@ html_upload_body = """
 </form>
 """
 
+html_nslcmop_body = """
+<a href="/osm/nslcm/v1/ns_lcm_op_occs?nsInstanceId={id}">nslcm operations </a>
+<form action="/osm/nslcm/v1/ns_instances/{id}/terminate" method="post" enctype="multipart/form-data">
+    <h3> <table style="border: 0;"> <tr>
+        <td> <input type="submit" value="Terminate"/> </td>
+    </tr> </table> </h3>
+</form>
+"""
+
 
 def format(data, request, response, session):
     """
@@ -123,6 +133,10 @@ def format(data, request, response, session):
             body += '<a href="{}"> show </a>'.format(response.headers["Location"])
         else:
             body += '<a href="/osm/{}?METHOD=DELETE"> <img src="/osm/static/delete.png" height="25" width="25"> </a>'.format(request.path_info)
+            if request.path_info.startswith("/nslcm/v1/ns_instances_content/") or \
+                    request.path_info.startswith("/nslcm/v1/ns_instances/"):
+                _id = request.path_info[request.path_info.rfind("/")+1:]
+                body += html_nslcmop_body.format(id=_id)
         body += "<pre>" + yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False) + "</pre>"
     elif data is None:
         if request.method == "DELETE" or "METHOD=DELETE" in request.query_string:

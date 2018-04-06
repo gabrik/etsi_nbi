@@ -282,42 +282,35 @@ class Engine(object):
                 raise EngineException("name '{}' already exist for {}".format(indata["name"], item),
                                       HTTPStatus.CONFLICT)
 
-
-    def _format_new_data(self, session, item, indata, admin=None):
+    def _format_new_data(self, session, item, indata):
         now = time()
         if not "_admin" in indata:
             indata["_admin"] = {}
         indata["_admin"]["created"] = now
         indata["_admin"]["modified"] = now
         if item == "users":
-            _id = indata["username"]
+            indata["_id"] = indata["username"]
             salt = uuid4().hex
             indata["_admin"]["salt"] = salt
             indata["password"] = sha256(indata["password"].encode('utf-8') + salt.encode('utf-8')).hexdigest()
         elif item == "projects":
-            _id = indata["name"]
+            indata["_id"] = indata["name"]
         else:
-            _id = None
-            storage = None
-            if admin:
-                _id = admin.get("_id")
-                storage = admin.get("storage")
-            if not _id:
-                _id = str(uuid4())
-            if item in ("vnfds", "nsds"):
+            if not indata.get("_id"):
+                indata["_id"] = str(uuid4())
+            if item in ("vnfds", "nsds", "nsrs"):
                 if not indata["_admin"].get("projects_read"):
                     indata["_admin"]["projects_read"] = [session["project_id"]]
                 if not indata["_admin"].get("projects_write"):
                     indata["_admin"]["projects_write"] = [session["project_id"]]
+            if item in ("vnfds", "nsds"):
                 indata["_admin"]["onboardingState"] = "CREATED"
                 indata["_admin"]["operationalState"] = "DISABLED"
                 indata["_admin"]["usageSate"] = "NOT_IN_USE"
-            elif item in ("vims", "sdns"):
+            if item == "nsrs":
+                indata["_admin"]["nsState"] = "NOT_INSTANTIATED"
+            if item in ("vims", "sdns"):
                 indata["_admin"]["operationalState"] = "PROCESSING"
-
-            if storage:
-                indata["_admin"]["storage"] = storage
-        indata["_id"] = _id
 
     def upload_content(self, session, item, _id, indata, kwargs, headers):
         """
@@ -457,6 +450,8 @@ class Engine(object):
                                   HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
         except IOError as e:
             raise EngineException("invalid upload transaction sequence: '{}'".format(e), HTTPStatus.BAD_REQUEST)
+        except tarfile.ReadError as e:
+            raise EngineException("invalid file content {}".format(e), HTTPStatus.BAD_REQUEST)
         except (ValueError, yaml.YAMLError) as e:
             raise EngineException(error_text + str(e))
         finally:
@@ -497,12 +492,48 @@ class Engine(object):
             "nsd-ref": nsd["id"],
             "ns-instance-config-ref": _id,
             "id": _id,
+            "_id": _id,
 
             # "input-parameter": xpath, value,
             "ssh-authorized-key": ns_request.get("key-pair-ref"),
         }
         ns_request["nsr_id"] = _id
-        return nsr_descriptor, _id
+        return nsr_descriptor
+
+    @staticmethod
+    def _update_descriptor(desc, kwargs):
+        """
+        Update descriptor with the kwargs
+        :param kwargs:
+        :return:
+        """
+        if not kwargs:
+            return
+        try:
+            for k, v in kwargs.items():
+                update_content = content
+                kitem_old = None
+                klist = k.split(".")
+                for kitem in klist:
+                    if kitem_old is not None:
+                        update_content = update_content[kitem_old]
+                    if isinstance(update_content, dict):
+                        kitem_old = kitem
+                    elif isinstance(update_content, list):
+                        kitem_old = int(kitem)
+                    else:
+                        raise EngineException(
+                            "Invalid query string '{}'. Descriptor is not a list nor dict at '{}'".format(k, kitem))
+                update_content[kitem_old] = v
+        except KeyError:
+            raise EngineException(
+                "Invalid query string '{}'. Descriptor does not contain '{}'".format(k, kitem_old))
+        except ValueError:
+            raise EngineException("Invalid query string '{}'. Expected integer index list instead of '{}'".format(
+                k, kitem))
+        except IndexError:
+            raise EngineException(
+                "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
 
     def new_item(self, session, item, indata={}, kwargs=None, headers={}):
         """
@@ -516,77 +547,111 @@ class Engine(object):
         :return: _id, transaction_id: identity of the inserted data. or transaction_id if Content-Range is used
         """
 
-        transaction = None
-
-        item_envelop = item
-        if item in ("nsds", "vnfds"):
-            item_envelop = "userDefinedData"
-        content = self._remove_envelop(item_envelop, indata)
-
-        # Override descriptor with query string kwargs
-        if kwargs:
-            try:
-                for k, v in kwargs.items():
-                    update_content = content
-                    kitem_old = None
-                    klist = k.split(".")
-                    for kitem in klist:
-                        if kitem_old is not None:
-                            update_content = update_content[kitem_old]
-                        if isinstance(update_content, dict):
-                            kitem_old = kitem
-                        elif isinstance(update_content, list):
-                            kitem_old = int(kitem)
-                        else:
-                            raise EngineException(
-                                "Invalid query string '{}'. Descriptor is not a list nor dict at '{}'".format(k, kitem))
-                    update_content[kitem_old] = v
-            except KeyError:
-                raise EngineException(
-                    "Invalid query string '{}'. Descriptor does not contain '{}'".format(k, kitem_old))
-            except ValueError:
-                raise EngineException("Invalid query string '{}'. Expected integer index list instead of '{}'".format(
-                    k, kitem))
-            except IndexError:
-                raise EngineException(
-                    "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
         try:
+            item_envelop = item
+            if item in ("nsds", "vnfds"):
+                item_envelop = "userDefinedData"
+            content = self._remove_envelop(item_envelop, indata)
+
+            # Override descriptor with query string kwargs
+            self._update_descriptor(content, kwargs)
+            if not indata and item not in ("nsds", "vnfds"):
+                raise EngineException("Empty payload")
+
             validate_input(content, item, new=True)
+
+            if item == "nsrs":
+                # in this case the imput descriptor is not the data to be stored
+                ns_request = content
+                content = self.new_nsr(session, ns_request)
+
+            self._validate_new_data(session, item_envelop, content)
+            if item in ("nsds", "vnfds"):
+                content = {"_admin": {"userDefinedData": content}}
+            self._format_new_data(session, item, content)
+            _id = self.db.create(item, content)
+            if item == "nsrs":
+                pass
+                # self.msg.write("ns", "created", _id)  # sending just for information.
+            elif item == "vims":
+                msg_data = self.db.get_one(item, {"_id": _id})
+                msg_data.pop("_admin", None)
+                self.msg.write("vim_account", "create", msg_data)
+            elif item == "sdns":
+                msg_data = self.db.get_one(item, {"_id": _id})
+                msg_data.pop("_admin", None)
+                self.msg.write("sdn", "create", msg_data)
+            return _id
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
-        if not indata and item not in ("nsds", "vnfds"):
-            raise EngineException("Empty payload")
+    def new_nslcmop(self, session, nsInstanceId, action, params):
+        now = time()
+        _id = str(uuid4())
+        nslcmop = {
+            "id": _id,
+            "_id": _id,
+            "operationState": "PROCESSING",  # COMPLETED,PARTIALLY_COMPLETED,FAILED_TEMP,FAILED,ROLLING_BACK,ROLLED_BACK
+            "statusEnteredTime": now,
+            "nsInstanceId": nsInstanceId,
+            "lcmOperationType": action,
+            "startTime": now,
+            "isAutomaticInvocation": False,
+            "operationParams": params,
+            "isCancelPending": False,
+            "links": {
+                "self": "/osm/nslcm/v1/ns_lcm_op_occs/" + _id,
+                "nsInstance": "/osm/nslcm/v1/ns_instances/" + nsInstanceId,
+            }
+        }
+        return nslcmop
 
-        if item == "nsrs":
-            # in this case the imput descriptor is not the data to be stored
-            ns_request = content
-            content, _id = self.new_nsr(session, ns_request)
-            transaction = {"_id": _id}
-
-        self._validate_new_data(session, item_envelop, content)
-        if item in ("nsds", "vnfds"):
-            content = {"_admin": {"userDefinedData": content}}
-        self._format_new_data(session, item, content, transaction)
-        _id = self.db.create(item, content)
-        if item == "nsrs":
-            self.msg.write("ns", "create", _id)
-        elif item == "vims":
-            msg_data = self.db.get_one(item, {"_id": _id})
-            msg_data.pop("_admin", None)
-            self.msg.write("vim_account", "create", msg_data)
-        elif item == "sdns":
-            msg_data = self.db.get_one(item, {"_id": _id})
-            msg_data.pop("_admin", None)
-            self.msg.write("sdn", "create", msg_data)
-        return _id
+    def ns_action(self, session, nsInstanceId, action, indata, kwargs=None):
+        """
+        Performs a new action over a ns
+        :param session: contains the used login username and working project
+        :param nsInstanceId: _id of the nsr to perform the action
+        :param action: it can be: instantiate, terminate, action, TODO: update, heal
+        :param indata: descriptor with the parameters of the action
+        :param kwargs: used to override the indata descriptor
+        :return: id of the nslcmops
+        """
+        try:
+            # Override descriptor with query string kwargs
+            self._update_descriptor(indata, kwargs)
+            validate_input(indata, "ns_" + action, new=True)
+            # get ns from nsr_id
+            nsr = self.get_item(session, "nsrs", nsInstanceId)
+            if nsr["_admin"]["nsState"] == "NOT_INSTANTIATED":
+                if action == "terminate" and indata.get("autoremove"):
+                    # NSR must be deleted
+                    return self.del_item(session, "nsrs", nsInstanceId)
+                if action != "instantiate":
+                    raise EngineException("ns_instance '{}' cannot be '{}' because it is not instantiated".format(
+                        nsInstanceId, action), HTTPStatus.CONFLICT)
+            else:
+                if action == "instantiate" and not indata.get("force"):
+                    raise EngineException("ns_instance '{}' cannot be '{}' because it is already instantiated".format(
+                        nsInstanceId, action), HTTPStatus.CONFLICT)
+            indata["nsInstanceId"] = nsInstanceId
+            # TODO
+            nslcmop = self.new_nslcmop(session, nsInstanceId, action, indata)
+            self._format_new_data(session, "nslcmops", nslcmop)
+            _id = self.db.create("nslcmops", nslcmop)
+            indata["_id"] = _id
+            self.msg.write("ns", action, nslcmop)
+            return _id
+        except ValidationError as e:
+            raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
+        # except DbException as e:
+        #     raise EngineException("Cannot get ns_instance '{}': {}".format(e), HTTPStatus.NOT_FOUND)
 
     def _add_read_filter(self, session, item, filter):
         if session["project_id"] == "admin":  # allows all
             return filter
         if item == "users":
             filter["username"] = session["username"]
-        elif item == "vnfds" or item == "nsds":
+        elif item in ("vnfds", "nsds", "nsrs"):
             filter["_admin.projects_read.cont"] = ["ANY", session["project_id"]]
 
     def _add_delete_filter(self, session, item, filter):
@@ -698,12 +763,13 @@ class Engine(object):
         self._add_read_filter(session, item, filter)
         return self.db.del_list(item, filter)
 
-    def del_item(self, session, item, _id):
+    def del_item(self, session, item, _id, force=False):
         """
         Get complete information on an items
         :param session: contains the used login username and working project
         :param item: it can be: users, projects, vnfds, nsds, ...
         :param _id: server id of the item
+        :param force: indicates if deletion must be forced in case of conflict
         :return: dictionary, raise exception if not found.
         """
         # TODO add admin to filter, validate rights
@@ -711,13 +777,21 @@ class Engine(object):
         filter = {"_id": _id}
         self._add_delete_filter(session, item, filter)
 
-        if item in ("nsrs", "vims", "sdns"):
+        if item == "nsrs":
+            nsr = self.db.get_one(item, filter)
+            if nsr["_admin"]["nsState"] == "INSTANTIATED" and not force:
+                raise EngineException("nsr '{}' cannot be deleted because it is in 'INSTANTIATED' state. "
+                                      "Launch 'terminate' action first; or force deletion".format(_id),
+                                      http_code=HTTPStatus.CONFLICT)
+            v = self.db.del_one(item, {"_id": _id})
+            self.db.del_list("nslcmops", {"nsInstanceId": _id})
+            self.msg.write("ns", "deleted", {"_id": _id})
+            return v
+        if item in ("vims", "sdns"):
             desc = self.db.get_one(item, filter)
             desc["_admin"]["to_delete"] = True
             self.db.replace(item, _id, desc)   # TODO change to set_one
-            if item == "nsrs":
-                self.msg.write("ns", "delete", _id)
-            elif item == "vims":
+            if item == "vims":
                 self.msg.write("vim_account", "delete", {"_id": _id})
             elif item == "sdns":
                 self.msg.write("sdn", "delete", {"_id": _id})
