@@ -20,7 +20,7 @@ from os import environ
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.3"
-version_date = "Mar 2018"
+version_date = "Apr 2018"
 
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
@@ -40,6 +40,8 @@ URL: /osm                                                       GET     POST    
                 /<subscriptionId>                               5                       X
 
         /vnfpkgm/v1
+            /vnf_packages_content                               O       O
+                /<vnfPkgId>                                     O                       O     
             /vnf_packages                                       O5      O5
                 /<vnfPkgId>                                     O5                      O5      5
                     /package_content                            O5               O5
@@ -380,6 +382,24 @@ class Server(object):
             return self._format_out("Welcome to OSM!", session)
 
     @cherrypy.expose
+    def version(self, *args, **kwargs):
+        global __version__, version_date
+        try:
+            if cherrypy.request.method != "GET":
+                raise NbiException("Only method GET is allowed", HTTPStatus.METHOD_NOT_ALLOWED)
+            elif args or kwargs:
+                raise NbiException("Invalid URL or query string for version", HTTPStatus.METHOD_NOT_ALLOWED)
+            return __version__ + " " + version_date
+        except NbiException as e:
+            cherrypy.response.status = e.http_code.value
+            problem_details = {
+                "code": e.http_code.name,
+                "status": e.http_code.value,
+                "detail": str(e),
+            }
+            return self._format_out(problem_details, None)
+
+    @cherrypy.expose
     def token(self, method, token_id=None, kwargs=None):
         session = None
         # self.engine.load_dbase(cherrypy.request.app.config)
@@ -432,18 +452,11 @@ class Server(object):
             return self._format_out(problem_details, session)
 
     @cherrypy.expose
-    def test2(self, args0=None, args1=None, args2=None, args3=None, *args, **kwargs):
-        return_text = (
-            "<html><pre>\n{} {} {} {} {} {} \n".format(args0, args1, args2, args3, args, kwargs))
-        return_text += "</pre></html>"
-        return return_text
-
-    @cherrypy.expose
     def test(self, *args, **kwargs):
         thread_info = None
         if args and args[0] == "help":
             return "<html><pre>\ninit\nfile/<name>  download file\ndb-clear/table\nprune\nlogin\nlogin2\n"\
-                    "sleep/<time>\n</pre></html>"
+                    "sleep/<time>\nmessage/topic\n</pre></html>"
 
         elif args and args[0] == "init":
             try:
@@ -460,8 +473,8 @@ class Server(object):
             f_path = cherrypy.tree.apps['/osm'].config["storage"]["path"] + "/" + args[1]
             f = open(f_path, "r")
             cherrypy.response.headers["Content-type"] = "text/plain"
-
             return f
+
         elif len(args) == 2 and args[0] == "db-clear":
             return self.engine.del_item_list({"project_id": "admin"}, args[1], {})
         elif args and args[0] == "prune":
@@ -487,12 +500,21 @@ class Server(object):
             # thread_info
         elif len(args) >= 2 and args[0] == "message":
             topic = args[1]
+            return_text = "<html><pre>{} ->\n".format(topic)
             try:
-                for k, v in kwargs.items():
-                    self.engine.msg.write(topic, k, yaml.load(v))
-                return "ok"
+                if cherrypy.request.method == 'POST':
+                    to_send = yaml.load(cherrypy.request.body)
+                    for k, v in to_send.items():
+                        self.engine.msg.write(topic, k, v)
+                        return_text += "  {}: {}\n".format(k, v)
+                elif cherrypy.request.method == 'GET':
+                    for k, v in kwargs.items():
+                        self.engine.msg.write(topic, k, yaml.load(v))
+                        return_text += "  {}: {}\n".format(k, yaml.load(v))
             except Exception as e:
-                return "Error: " + str(e)
+                return_text += "Error: " + str(e)
+            return_text += "</pre></html>\n"
+            return return_text
 
         return_text = (
             "<html><pre>\nheaders:\n  args: {}\n".format(args) +
