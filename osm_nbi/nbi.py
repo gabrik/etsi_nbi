@@ -21,6 +21,7 @@ from os import environ
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.3"
 version_date = "Apr 2018"
+database_version = '1.0'
 
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
@@ -788,7 +789,7 @@ def _start_service():
     # TODO add more entries, e.g.: storage
     cherrypy.tree.apps['/osm'].root.engine.start(engine_config)
     try:
-        cherrypy.tree.apps['/osm'].root.engine.create_admin()
+        cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
     except EngineException:
         pass
     # getenv('OSMOPENMANO_TENANT', None)

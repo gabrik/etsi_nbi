@@ -736,17 +736,46 @@ class Engine(object):
 
     def create_admin(self):
         """
-        Creates a new user admin/admin into database. Only allowed if database is empty. Useful for initialization
-        :return: _id identity of the inserted data.
+        Creates a new user admin/admin into database if database is empty. Useful for initialization
+        :return: _id identity of the inserted data, or None
         """
         users = self.db.get_one("users", fail_on_empty=False, fail_on_more=False)
         if users:
-            raise EngineException("Unauthorized. Database users is not empty", HTTPStatus.UNAUTHORIZED)
+            return None
+            # raise EngineException("Unauthorized. Database users is not empty", HTTPStatus.UNAUTHORIZED)
         indata = {"username": "admin", "password": "admin", "projects": ["admin"]}
         fake_session = {"project_id": "admin", "username": "admin"}
         self._format_new_data(fake_session, "users", indata)
         _id = self.db.create("users", indata)
         return _id
+
+    def init_db(self, target_version='1.0'):
+        """
+        Init database if empty. If not empty it checks that database version is ok.
+        If empty, it creates a new user admin/admin at 'users' and a new entry at 'version'
+        :return: None if ok, exception if error or if the version is different.
+        """
+        version = self.db.get_one("versions", fail_on_empty=False, fail_on_more=False)
+        if not version:
+            # create user admin
+            self.create_admin()
+            # create database version
+            version_data = {
+                "_id": '1.0',                     # version text
+                "version": 1000,                  # version number
+                "date": "2018-04-12",             # version date
+                "description": "initial design",  # changes in this version
+                'status': 'ENABLED'               # ENABLED, DISABLED (migration in process), ERROR,
+            }
+            self.db.create("version", version_data)
+        elif version["_id"] != target_version:
+            # TODO implement migration process
+            raise EngineException("Wrong database version '{}'. Expected '{}'".format(
+                version["_id"], target_version), HTTPStatus.INTERNAL_SERVER_ERROR)
+        elif version["status"] != 'ENABLED':
+            raise EngineException("Wrong database status '{}'".format(
+                version["status"]), HTTPStatus.INTERNAL_SERVER_ERROR)
+        return
 
     def _edit_item(self, session, item, id, content, indata={}, kwargs=None):
         if indata:
