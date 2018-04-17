@@ -8,6 +8,7 @@ ADD . /app
 
 RUN apt-get update && apt-get -y install git  python3 python3-jsonschema \
     python3-cherrypy3 python3-pymongo python3-yaml python3-pip \
+    && pip3 install pip==9.0.3 \
     && pip3 install aiokafka \
     && mkdir -p /app/storage/kafka && mkdir -p /app/log 
 
