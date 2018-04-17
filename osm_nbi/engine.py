@@ -755,7 +755,7 @@ class Engine(object):
         If empty, it creates a new user admin/admin at 'users' and a new entry at 'version'
         :return: None if ok, exception if error or if the version is different.
         """
-        version = self.db.get_one("versions", fail_on_empty=False, fail_on_more=False)
+        version = self.db.get_one("version", fail_on_empty=False, fail_on_more=False)
         if not version:
             # create user admin
             self.create_admin()
