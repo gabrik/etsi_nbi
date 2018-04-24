@@ -2,7 +2,7 @@
 Description=NBI server (OSM NBI)
 
 [Service]
-ExecStart=/usr/bin/nbi -c /etc/osm/nbi.cfg --log-file=/var/log/osm/nbi.log
+ExecStart=/usr/bin/nbi.py -c /etc/osm/nbi.cfg --log-file=/var/log/osm/nbi.log
 Restart=always
 
 [Install]

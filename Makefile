@@ -1,53 +1,34 @@
-.PHONY: all test clean
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
 
-SHELL := /bin/bash
+OUT_DIR := osm_im
+TREES_DIR := osm_im_trees
+Q?=@
 
-BRANCH ?= master
-
-all:
-	$(MAKE) clean_build build
+all: package
 	$(MAKE) clean_build package
 
 clean: clean_build
-	rm -rf .build
+	$(Q)rm -rf build dist osm_nbi.egg-info deb deb_dist *.gz $(OUT_DIR) $(TREES_DIR)
 
 clean_build:
 	rm -rf build
 	find osm_nbi -name '*.pyc' -delete
 	find osm_nbi -name '*.pyo' -delete
 
-prepare:
-	mkdir -p build/
-	cp tox.ini build/
-	cp MANIFEST.in build/
-	cp requirements.txt build/
-	cp README.rst build/
-	cp setup.py build/
-	cp stdeb.cfg build/
-	cp -r osm_nbi build/
-	cp LICENSE build/osm_nbi
-
-
-package: prepare
-#	apt-get install -y python-stdeb
-	cd build && python3 setup.py --command-packages=stdeb.command sdist_dsc  # --with-python2=False
-	cd build/deb_dist/osm-nbi-* && dpkg-buildpackage -rfakeroot -uc -us
-	mkdir -p .build
-	cp build/deb_dist/python3-*.deb .build/
-
-snap:
-	echo "Nothing to be done yet"
-
-install: package
-	dpkg -i .build/python-osm-nbi*.deb
-	cd .. && \
-	OSMLIBOVIM_PATH=`python -c 'import lib_osm_openvim; print lib_osm_openvim.__path__[0]'` || FATAL "lib-osm-openvim was not properly installed" && \
-	OSMNBI_PATH=`python3 -c 'import osm_nbi; print(osm_nbi.__path__[0])'` || FATAL "osm-nbi was not properly installed" && \
-	service osm-nbi restart
-
-develop: prepare
-#	pip install -r requirements.txt
-	cd build && ./setup.py develop
+package:
+	tox -e build
 
 test:
 	echo "TODO"

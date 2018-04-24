@@ -1,3 +1,8 @@
+# This Dockerfile is intented for devops and deb package generation
+#
+# Use Dockerfile.local for running osm/NBI in a docker container
+
+
 FROM ubuntu:16.04
 
 RUN apt-get update && apt-get -y install git make python python3 \

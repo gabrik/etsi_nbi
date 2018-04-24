@@ -19,7 +19,9 @@ from codecs import getreader
 from os import environ
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
-__version__ = "0.3"
+
+# TODO consider to remove and provide version using the static version file
+__version__ = "0.1.3"
 version_date = "Apr 2018"
 database_version = '1.0'
 
@@ -396,6 +398,7 @@ class Server(object):
 
     @cherrypy.expose
     def version(self, *args, **kwargs):
+        # TODO consider to remove and provide version using the static version file
         global __version__, version_date
         try:
             if cherrypy.request.method != "GET":
