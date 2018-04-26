@@ -277,7 +277,7 @@ class Engine(object):
 
         elif item == "nsrs":
             pass
-        elif item == "vims" or item == "sdns":
+        elif item == "vim_accounts" or item == "sdns":
             if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
                 raise EngineException("name '{}' already exist for {}".format(indata["name"], item),
                                       HTTPStatus.CONFLICT)
@@ -309,7 +309,7 @@ class Engine(object):
                 indata["_admin"]["usageSate"] = "NOT_IN_USE"
             if item == "nsrs":
                 indata["_admin"]["nsState"] = "NOT_INSTANTIATED"
-            if item in ("vims", "sdns"):
+            if item in ("vim_accounts", "sdns"):
                 indata["_admin"]["operationalState"] = "PROCESSING"
 
     def upload_content(self, session, item, _id, indata, kwargs, headers):
@@ -540,7 +540,7 @@ class Engine(object):
         Creates a new entry into database. For nsds and vnfds it creates an almost empty DISABLED  entry,
         that must be completed with a call to method upload_content
         :param session: contains the used login username and working project
-        :param item: it can be: users, projects, vims, sdns, nsrs, nsds, vnfds
+        :param item: it can be: users, projects, vim_accounts, sdns, nsrs, nsds, vnfds
         :param indata: data to be inserted
         :param kwargs: used to override the indata descriptor
         :param headers: http request headers
@@ -573,7 +573,7 @@ class Engine(object):
             if item == "nsrs":
                 pass
                 # self.msg.write("ns", "created", _id)  # sending just for information.
-            elif item == "vims":
+            elif item == "vim_accounts":
                 msg_data = self.db.get_one(item, {"_id": _id})
                 msg_data.pop("_admin", None)
                 self.msg.write("vim_account", "create", msg_data)
@@ -770,7 +770,7 @@ class Engine(object):
         :param item: it can be: users, projects, vnfds, nsds, ...
         :param _id: server id of the item
         :param force: indicates if deletion must be forced in case of conflict
-        :return: dictionary, raise exception if not found.
+        :return: dictionary with deleted item _id. It raises exception if not found.
         """
         # TODO add admin to filter, validate rights
         # data = self.get_item(item, _id)
@@ -787,11 +787,11 @@ class Engine(object):
             self.db.del_list("nslcmops", {"nsInstanceId": _id})
             self.msg.write("ns", "deleted", {"_id": _id})
             return v
-        if item in ("vims", "sdns"):
+        if item in ("vim_accounts", "sdns"):
             desc = self.db.get_one(item, filter)
             desc["_admin"]["to_delete"] = True
             self.db.replace(item, _id, desc)   # TODO change to set_one
-            if item == "vims":
+            if item == "vim_accounts":
                 self.msg.write("vim_account", "delete", {"_id": _id})
             elif item == "sdns":
                 self.msg.write("sdn", "delete", {"_id": _id})
@@ -891,10 +891,10 @@ class Engine(object):
         self._validate_new_data(session, item, content, id)
         # self._format_new_data(session, item, content)
         self.db.replace(item, id, content)
-        if item in ("vims", "sdns"):
+        if item in ("vim_accounts", "sdns"):
             indata.pop("_admin", None)
             indata["_id"] = id
-            if item == "vims":
+            if item == "vim_accounts":
                 self.msg.write("vim_account", "edit", indata)
             elif item == "sdns":
                 self.msg.write("sdn", "edit", indata)

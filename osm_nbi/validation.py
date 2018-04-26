@@ -65,10 +65,30 @@ ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive
 
 
 schema_version = {"type": "string", "enum": ["1.0"]}
+vim_account_edit_schema = {
+    "title": "vim_account edit input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": name_schema,
+        "description": description_schema,
+        "type": nameshort_schema,  # currently "openvim" or "openstack", can be enlarged with plugins
+        "vim": name_schema,
+        "datacenter": name_schema,
+        "vim_url": description_schema,
+        "vim_url_admin": description_schema,
+        "vim_tenant": name_schema,
+        "vim_tenant_name": name_schema,
+        "vim_username": nameshort_schema,
+        "vim_password": nameshort_schema,
+        "config": {"type": "object"}
+    },
+    "additionalProperties": False
+}
 schema_type = {"type": "string"}
 
-vim_new_schema = {
-    "title": "vims new user input schema",
+vim_account_new_schema = {
+    "title": "vim_account creation input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
@@ -76,6 +96,8 @@ vim_new_schema = {
         "schema_type": schema_type,
         "name": name_schema,
         "description": description_schema,
+        "vim": name_schema,
+        "datacenter": name_schema,
         "vim_type": {"enum": ["openstack", "openvim", "vmware", "opennebula", "aws"]},
         "vim_url": description_schema,
         # "vim_url_admin": description_schema,
@@ -86,24 +108,6 @@ vim_new_schema = {
         "config": {"type": "object"}
     },
     "required": ["name", "vim_url", "vim_type", "vim_user", "vim_password", "vim_tenant_name"],
-    "additionalProperties": False
-}
-vim_edit_schema = {
-    "title": "datacenter edit nformation schema",
-    "$schema": "http://json-schema.org/draft-04/schema#",
-    "type": "object",
-    "properties": {
-        "name": name_schema,
-        "description": description_schema,
-        "type": nameshort_schema,  # currently "openvim" or "openstack", can be enlarged with plugins
-        "vim_url": description_schema,
-        "vim_url_admin": description_schema,
-        "vim_tenant": name_schema,
-        "vim_tenant_name": name_schema,
-        "vim_username": nameshort_schema,
-        "vim_password": nameshort_schema,
-        "config": {"type": "object"}
-    },
     "additionalProperties": False
 }
 
@@ -172,14 +176,14 @@ sdn_external_port_schema = {
 
 
 nbi_new_input_schemas = {
-    "vims": vim_new_schema,
+    "vim_accounts": vim_account_new_schema,
     "sdns": sdn_new_schema,
     "ns_instantiate": ns_instantiate,
     "ns_action": ns_action,
 }
 
 nbi_edit_input_schemas = {
-    "vims": vim_edit_schema,
+    "vim_accounts": vim_account_edit_schema,
     "sdns": sdn_edit_schema
 }
 

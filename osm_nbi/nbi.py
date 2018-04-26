@@ -76,7 +76,7 @@ URL: /osm                                                       GET     POST    
                 /<id>                                           O                       O     
             /projects                                           O       O
                 /<id>                                           O                       O     
-            /vims                                               O       O
+            /vims_accounts  (also vims for compatibility)       O       O
                 /<id>                                           O                       O       O     
             /sdns                                               O       O
                 /<id>                                           O                       O       O     
@@ -147,6 +147,9 @@ class Server(object):
                         "<ID>": {"METHODS": ("GET", "DELETE")}
                     },
                     "vims": {"METHODS": ("GET", "POST"),
+                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                    },
+                    "vim_accounts": {"METHODS": ("GET", "POST"),
                         "<ID>": {"METHODS": ("GET", "DELETE")}
                     },
                     "sdns": {"METHODS": ("GET", "POST"),
@@ -349,7 +352,7 @@ class Server(object):
         if data is None:
             if accept and "text/html" in accept:
                 return html.format(data, cherrypy.request, cherrypy.response, session)
-            cherrypy.response.status = HTTPStatus.NO_CONTENT.value
+            # cherrypy.response.status = HTTPStatus.NO_CONTENT.value
             return
         elif hasattr(data, "read"):  # file object
             if _format:
@@ -635,6 +638,8 @@ class Server(object):
                 engine_item = "nsrs"
                 if item == "ns_lcm_op_occs":
                     engine_item = "nslcmops"
+            if engine_item == "vims":   # TODO this is for backward compatibility, it will remove in the future
+                engine_item = "vim_accounts"
 
             if method == "GET":
                 if item2 in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
@@ -680,17 +685,22 @@ class Server(object):
                     outdata = {"id": _id}
                     # TODO form NsdInfo when item in ("ns_descriptors", "vnf_packages")
                 cherrypy.response.status = HTTPStatus.CREATED.value
+
             elif method == "DELETE":
                 if not _id:
                     outdata = self.engine.del_item_list(session, engine_item, kwargs)
+                    cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
                     if item == "ns_instances_content":
                         self.engine.ns_action(session, _id, "terminate", {"autoremove": True}, None)
+                        cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
                         force = kwargs.get("FORCE")
                         self.engine.del_item(session, engine_item, _id, force)
-                    # TODO return 202 ACCEPTED for nsrs vims
-                    outdata = None
+                        cherrypy.response.status = HTTPStatus.NO_CONTENT.value
+                if engine_item in ("vim_accounts", "sdns"):
+                    cherrypy.response.status = HTTPStatus.ACCEPTED.value
+
             elif method == "PUT":
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
@@ -699,6 +709,7 @@ class Server(object):
                     completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
                     if not completed:
                         cherrypy.response.headers["Transaction-Id"] = id
+                    cherrypy.response.status = HTTPStatus.NO_CONTENT.value
                     outdata = None
                 else:
                     outdata = {"id": self.engine.edit_item(session, engine_item, args[1], indata, kwargs)}

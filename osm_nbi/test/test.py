@@ -83,12 +83,12 @@ vim_bad = vim.copy()
 vim_bad.pop("name")
 
 test_admin_list1 = (
-    ("VIM1", "Create VIM", "POST", "/admin/v1/vims", headers_json, vim, (201, 204), {"Location": "/admin/v1/vims/", "Content-Type": "application/json"}, "json"),
-    ("VIM2", "Create VIM bad schema", "POST", "/admin/v1/vims", headers_json, vim_bad, 422, None, headers_json),
-    ("VIM2", "Create VIM name repeated", "POST", "/admin/v1/vims", headers_json, vim, 409, None, headers_json),
-    ("VIM4", "Show VIMs", "GET", "/admin/v1/vims", headers_yaml, None, 200, r_header_yaml, "yaml"),
-    ("VIM5", "Show VIM", "GET", "/admin/v1/vims/{VIM1}", headers_yaml, None, 200, r_header_yaml, "yaml"),
-    ("VIM6", "Delete VIM", "DELETE", "/admin/v1/vims/{VIM1}", headers_yaml, None, 204, None, 0),
+    ("VIM1", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, vim, (201, 204), {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json"),
+    ("VIM2", "Create VIM bad schema", "POST", "/admin/v1/vim_accounts", headers_json, vim_bad, 422, None, headers_json),
+    ("VIM2", "Create VIM name repeated", "POST", "/admin/v1/vim_accounts", headers_json, vim, 409, None, headers_json),
+    ("VIM4", "Show VIMs", "GET", "/admin/v1/vim_accounts", headers_yaml, None, 200, r_header_yaml, "yaml"),
+    ("VIM5", "Show VIM", "GET", "/admin/v1/vim_accounts/{VIM1}", headers_yaml, None, 200, r_header_yaml, "yaml"),
+    ("VIM6", "Delete VIM", "DELETE", "/admin/v1/vim_accounts/{VIM1}", headers_yaml, None, 202, None, 0),
 )
 
 class TestException(Exception):
