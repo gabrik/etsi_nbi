@@ -490,6 +490,7 @@ class Engine(object):
             "nsd-name-ref": nsd["name"],
             "operational-events": [],   # "id", "timestamp", "description", "event",
             "nsd-ref": nsd["id"],
+            "instantiate_params": ns_request,
             "ns-instance-config-ref": _id,
             "id": _id,
             "_id": _id,
@@ -622,7 +623,7 @@ class Engine(object):
             validate_input(indata, "ns_" + action, new=True)
             # get ns from nsr_id
             nsr = self.get_item(session, "nsrs", nsInstanceId)
-            if nsr["_admin"]["nsState"] == "NOT_INSTANTIATED":
+            if not nsr["_admin"].get("nsState") or nsr["_admin"]["nsState"] == "NOT_INSTANTIATED":
                 if action == "terminate" and indata.get("autoremove"):
                     # NSR must be deleted
                     return self.del_item(session, "nsrs", nsInstanceId)
