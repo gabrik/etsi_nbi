@@ -251,15 +251,15 @@ class Engine(object):
                 raise EngineException("missing 'password'", HTTPStatus.UNPROCESSABLE_ENTITY)
             if not indata.get("projects"):
                 raise EngineException("missing 'projects'", HTTPStatus.UNPROCESSABLE_ENTITY)
-            # check username not exist
+            # check username not exists
             if self.db.get_one(item, {"username": indata.get("username")}, fail_on_empty=False, fail_on_more=False):
-                raise EngineException("username '{}' exist".format(indata["username"]), HTTPStatus.CONFLICT)
+                raise EngineException("username '{}' exists".format(indata["username"]), HTTPStatus.CONFLICT)
         elif item == "projects":
             if not indata.get("name"):
                 raise EngineException("missing 'name'")
-            # check name not exist
+            # check name not exists
             if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
-                raise EngineException("name '{}' exist".format(indata["name"]), HTTPStatus.CONFLICT)
+                raise EngineException("name '{}' exists".format(indata["name"]), HTTPStatus.CONFLICT)
         elif item in ("vnfds", "nsds"):
             filter = {"id": indata["id"]}
             if id:
@@ -267,7 +267,7 @@ class Engine(object):
             # TODO add admin to filter, validate rights
             self._add_read_filter(session, item, filter)
             if self.db.get_one(item, filter, fail_on_empty=False):
-                raise EngineException("{} with id '{}' already exist for this tenant".format(item[:-1], indata["id"]),
+                raise EngineException("{} with id '{}' already exists for this tenant".format(item[:-1], indata["id"]),
                                       HTTPStatus.CONFLICT)
 
             # TODO validate with pyangbind
@@ -279,7 +279,7 @@ class Engine(object):
             pass
         elif item == "vim_accounts" or item == "sdns":
             if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
-                raise EngineException("name '{}' already exist for {}".format(indata["name"], item),
+                raise EngineException("name '{}' already exists for {}".format(indata["name"], item),
                                       HTTPStatus.CONFLICT)
 
     def _format_new_data(self, session, item, indata):
@@ -324,7 +324,7 @@ class Engine(object):
         :return: True package has is completely uploaded or False if partial content has been uplodaed.
             Raise exception on error
         """
-        # Check that _id exist and it is valid
+        # Check that _id exists and it is valid
         current_desc = self.get_item(session, item, _id)
 
         content_range_text = headers.get("Content-Range")

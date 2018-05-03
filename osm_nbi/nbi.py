@@ -603,6 +603,7 @@ class Server(object):
         _format = None
         method = "DONE"
         engine_item = None
+        rollback = None
         try:
             if not topic or not version or not item:
                 raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -663,6 +664,7 @@ class Server(object):
                     _id = cherrypy.request.headers.get("Transaction-Id")
                     if not _id:
                         _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers)
+                        rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
                     completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
                     if completed:
                         self._set_location_header(topic, version, item, _id)
@@ -671,6 +673,7 @@ class Server(object):
                     outdata = {"id": _id}
                 elif item == "ns_instances_content":
                     _id = self.engine.new_item(session, engine_item, indata, kwargs)
+                    rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
                     self.engine.ns_action(session, _id, "instantiate", {}, None)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
@@ -692,7 +695,8 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
                     if item == "ns_instances_content":
-                        self.engine.ns_action(session, _id, "terminate", {"autoremove": True}, None)
+                        opp_id = self.engine.ns_action(session, _id, "terminate", {"autoremove": True}, None)
+                        outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
                         force = kwargs.get("FORCE")
@@ -717,10 +721,15 @@ class Server(object):
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
         except (NbiException, EngineException, DbException, FsException, MsgException) as e:
-            if hasattr(outdata, "close"):  # is an open file
-                outdata.close()
             cherrypy.log("Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
+            if hasattr(outdata, "close"):  # is an open file
+                outdata.close()
+            if rollback:
+                try:
+                    self.engine.del_item(**rollback)
+                except Exception as e2:
+                    cherrypy.log("Rollback Exception {}: {}".format(rollback, e2))
             error_text = str(e)
             if isinstance(e, MsgException):
                 error_text = "{} has been '{}' but other modules cannot be informed because an error on bus".format(
