@@ -37,7 +37,6 @@ def _deep_update(dict_to_change, dict_reference):
     :param dict_reference: reference
     :return: none
     """
-
     for k in dict_reference:
         if dict_reference[k] is None:   # None->Anything
             if k in dict_to_change:
@@ -52,6 +51,7 @@ def _deep_update(dict_to_change, dict_reference):
         else:       # Dict->NotDict
             dict_to_change[k] = deepcopy(dict_reference[k])
             _deep_update(dict_to_change[k], dict_reference[k])
+
 
 class Engine(object):
 
@@ -298,7 +298,7 @@ class Engine(object):
         else:
             if not indata.get("_id"):
                 indata["_id"] = str(uuid4())
-            if item in ("vnfds", "nsds", "nsrs"):
+            if item in ("vnfds", "nsds", "nsrs", "vnfrs"):
                 if not indata["_admin"].get("projects_read"):
                     indata["_admin"]["projects_read"] = [session["project_id"]]
                 if not indata["_admin"].get("projects_write"):
@@ -460,46 +460,130 @@ class Engine(object):
 
     def new_nsr(self, session, ns_request):
         """
-        Creates a new nsr into database
+        Creates a new nsr into database. It also creates needed vnfrs
         :param session: contains the used login username and working project
         :param ns_request: params to be used for the nsr
-        :return: nsr descriptor to be stored at database and the _id
+        :return: the _id of nsr descriptor stored at database
         """
+        rollback = []
+        step = ""
+        try:
+            # look for nsr
+            step = "getting nsd id='{}' from database".format(ns_request.get("nsdId"))
+            nsd = self.get_item(session, "nsds", ns_request["nsdId"])
+            nsr_id = str(uuid4())
+            now = time()
+            step = "filling nsr from input data"
+            nsr_descriptor = {
+                "name": ns_request["nsName"],
+                "name-ref": ns_request["nsName"],
+                "short-name": ns_request["nsName"],
+                "admin-status": "ENABLED",
+                "nsd": nsd,
+                "datacenter": ns_request["vimAccountId"],
+                "resource-orchestrator": "osmopenmano",
+                "description": ns_request.get("nsDescription", ""),
+                "constituent-vnfr-ref": [],
 
-        # look for nsr
-        nsd = self.get_item(session, "nsds", ns_request["nsdId"])
-        _id = str(uuid4())
-        nsr_descriptor = {
-            "name": ns_request["nsName"],
-            "name-ref": ns_request["nsName"],
-            "short-name": ns_request["nsName"],
-            "admin-status": "ENABLED",
-            "nsd": nsd,
-            "datacenter": ns_request["vimAccountId"],
-            "resource-orchestrator": "osmopenmano",
-            "description": ns_request.get("nsDescription", ""),
-            "constituent-vnfr-ref": ["TODO datacenter-id, vnfr-id"],
+                "operational-status": "init",    #  typedef ns-operational-
+                "config-status": "init",         #  typedef config-states
+                "detailed-status": "scheduled",
 
-            "operational-status": "init",    #  typedef ns-operational-
-            "config-status": "init",         #  typedef config-states
-            "detailed-status": "scheduled",
+                "orchestration-progress": {},  # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
 
-            "orchestration-progress": {},  # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
+                "crete-time": now,
+                "nsd-name-ref": nsd["name"],
+                "operational-events": [],   # "id", "timestamp", "description", "event",
+                "nsd-ref": nsd["id"],
+                "instantiate_params": ns_request,
+                "ns-instance-config-ref": nsr_id,
+                "id": nsr_id,
+                "_id": nsr_id,
+                # "input-parameter": xpath, value,
+                "ssh-authorized-key": ns_request.get("key-pair-ref"),
+            }
+            ns_request["nsr_id"] = nsr_id
 
-            "crete-time": time(),
-            "nsd-name-ref": nsd["name"],
-            "operational-events": [],   # "id", "timestamp", "description", "event",
-            "nsd-ref": nsd["id"],
-            "instantiate_params": ns_request,
-            "ns-instance-config-ref": _id,
-            "id": _id,
-            "_id": _id,
+            # Create VNFR
+            needed_vnfds = {}
+            for member_vnf in nsd["constituent-vnfd"]:
+                vnfd_id = member_vnf["vnfd-id-ref"]
+                step = "getting vnfd id='{}' constituent-vnfd='{}' from database".format(
+                    member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
+                if vnfd_id not in needed_vnfds:
+                    # Obtain vnfd
+                    vnf_filter = {"id": vnfd_id}
+                    self._add_read_filter(session, "vnfds", vnf_filter)
+                    vnfd = self.db.get_one("vnfds", vnf_filter)
+                    vnfd.pop("_admin")
+                    needed_vnfds[vnfd_id] = vnfd
+                else:
+                    vnfd = needed_vnfds[vnfd_id]
+                step = "filling vnfr  vnfd-id='{}' constituent-vnfd='{}'".format(
+                    member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
+                vnfr_id = str(uuid4())
+                vnfr_descriptor = {
+                    "id": vnfr_id,
+                    "_id": vnfr_id,
+                    "nsr-id-ref": nsr_id,
+                    "member-vnf-index-ref": member_vnf["member-vnf-index"],
+                    "created-time": now,
+                    # "vnfd": vnfd,        # at OSM model. TODO can it be removed in the future to avoid data duplication?
+                    "vnfd-ref": vnfd_id,
+                    "vnfd-id": vnfr_id,    # not at OSM model, but useful
+                    "vim-account-id": None,
+                    "vdur": [],
+                    "connection-point": [],
+                    "ip-address": None,  # mgmt-interface filled by LCM
+                }
+                for cp in vnfd.get("connection-point", ()):
+                    vnf_cp = {
+                        "name": cp["name"],
+                        "connection-point-id": cp.get("id"),
+                        "id": cp.get("id"),
+                        # "ip-address", "mac-address" # filled by LCM
+                        # vim-id  # TODO it would be nice having a vim port id
+                    }
+                    vnfr_descriptor["connection-point"].append(vnf_cp)
+                for vdu in vnfd["vdu"]:
+                    vdur_id = str(uuid4())
+                    vdur = {
+                        "id": vdur_id,
+                        "vdu-id-ref": vdu["id"],
+                        "ip-address": None,  # mgmt-interface filled by LCM
+                        # "vim-id", "flavor-id", "image-id", "management-ip" # filled by LCM
+                        "internal-connection-point": [],
+                    }
+                    # TODO volumes: name, volume-id
+                    for icp in vdu.get("internal-connection-point", ()):
+                        vdu_icp = {
+                            "id": icp["id"],
+                            "connection-point-id": icp["id"],
+                            "name": icp.get("name"),
+                            # "ip-address", "mac-address" # filled by LCM
+                            # vim-id  # TODO it would be nice having a vim port id
+                        }
+                        vdur["internal-connection-point"].append(vdu_icp)
+                    vnfr_descriptor["vdur"].append(vdur)
 
-            # "input-parameter": xpath, value,
-            "ssh-authorized-key": ns_request.get("key-pair-ref"),
-        }
-        ns_request["nsr_id"] = _id
-        return nsr_descriptor
+                step = "creating vnfr vnfd-id='{}' constituent-vnfd='{}' at database".format(
+                    member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
+                self._format_new_data(session, "vnfrs", vnfr_descriptor)
+                self.db.create("vnfrs", vnfr_descriptor)
+                rollback.append({"session": session, "item": "vnfrs", "_id": vnfr_id, "force": True})
+                nsr_descriptor["constituent-vnfr-ref"].append(vnfr_id)
+
+            step = "creating nsr at database"
+            self._format_new_data(session, "nsrs", nsr_descriptor)
+            self.db.create("nsrs", nsr_descriptor)
+            return nsr_id
+        except Exception as e:
+            raise EngineException("Error {}: {}".format(step, e))
+            for rollback_item in rollback:
+                try:
+                    self.engine.del_item(**rollback)
+                except Exception as e2:
+                    self.logger.error("Rollback Exception {}: {}".format(rollback, e2))
 
     @staticmethod
     def _update_descriptor(desc, kwargs):
@@ -545,7 +629,7 @@ class Engine(object):
         :param indata: data to be inserted
         :param kwargs: used to override the indata descriptor
         :param headers: http request headers
-        :return: _id, transaction_id: identity of the inserted data. or transaction_id if Content-Range is used
+        :return: _id: identity of the inserted data.
         """
 
         try:
@@ -562,19 +646,16 @@ class Engine(object):
             validate_input(content, item, new=True)
 
             if item == "nsrs":
-                # in this case the imput descriptor is not the data to be stored
-                ns_request = content
-                content = self.new_nsr(session, ns_request)
+                # in this case the input descriptor is not the data to be stored
+                return self.new_nsr(session, ns_request=content)
 
             self._validate_new_data(session, item_envelop, content)
             if item in ("nsds", "vnfds"):
                 content = {"_admin": {"userDefinedData": content}}
             self._format_new_data(session, item, content)
             _id = self.db.create(item, content)
-            if item == "nsrs":
-                pass
-                # self.msg.write("ns", "created", _id)  # sending just for information.
-            elif item == "vim_accounts":
+
+            if item == "vim_accounts":
                 msg_data = self.db.get_one(item, {"_id": _id})
                 msg_data.pop("_admin", None)
                 self.msg.write("vim_account", "create", msg_data)
@@ -786,6 +867,7 @@ class Engine(object):
                                       http_code=HTTPStatus.CONFLICT)
             v = self.db.del_one(item, {"_id": _id})
             self.db.del_list("nslcmops", {"nsInstanceId": _id})
+            self.db.del_list("vnfrs", {"nsr-id-ref": _id})
             self.msg.write("ns", "deleted", {"_id": _id})
             return v
         if item in ("vim_accounts", "sdns"):
@@ -914,6 +996,4 @@ class Engine(object):
 
         content = self.get_item(session, item, _id)
         return self._edit_item(session, item, _id, content, indata, kwargs)
-
-
 

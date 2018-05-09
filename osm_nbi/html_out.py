@@ -91,6 +91,7 @@ html_upload_body = """
 
 html_nslcmop_body = """
 <a href="/osm/nslcm/v1/ns_lcm_op_occs?nsInstanceId={id}">nslcm operations </a>
+<a href="/osm/nslcm/v1/vnfrs?nsr-id-ref={id}">VNFRS </a>
 <form action="/osm/nslcm/v1/ns_instances/{id}/terminate" method="post" enctype="multipart/form-data">
     <h3> <table style="border: 0;"> <tr>
         <td> <input type="submit" value="Terminate"/> </td>
