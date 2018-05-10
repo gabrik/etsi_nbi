@@ -1,3 +1,5 @@
+# This creates osm/NBI docker from local NBI source code
+
 FROM ubuntu:16.04
 
 # Set the working directory to /app
@@ -6,11 +8,16 @@ WORKDIR /app/osm_nbi
 # Copy the current directory contents into the container at /app
 ADD . /app
 
-RUN apt-get update && apt-get -y install git  python3 python3-jsonschema \
+RUN apt-get update && apt-get install -y git python3 python3-jsonschema \
     python3-cherrypy3 python3-pymongo python3-yaml python3-pip \
     && pip3 install pip==9.0.3 \
     && pip3 install aiokafka \
     && mkdir -p /app/storage/kafka && mkdir -p /app/log 
+RUN git clone https://osm.etsi.org/gerrit/osm/common.git \
+    && cd common  && python3 setup.py develop && cd ..
+#    && pip3 install -U -r requirements.txt \
+#    && cd ..
+
 
 
 EXPOSE 9999

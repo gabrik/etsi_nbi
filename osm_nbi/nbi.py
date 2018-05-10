@@ -8,9 +8,9 @@ import yaml
 import html_out as html
 import logging
 from engine import Engine, EngineException
-from dbbase import DbException
-from fsbase import FsException
-from msgbase import MsgException
+from osm_common.dbbase import DbException
+from osm_common.fsbase import FsException
+from osm_common.msgbase import MsgException
 from base64 import standard_b64decode
 #from os import getenv
 from http import HTTPStatus

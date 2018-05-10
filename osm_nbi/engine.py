@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 
-import dbmongo
-import dbmemory
-import fslocal
-import msglocal
-import msgkafka
+from osm_common import dbmongo
+from osm_common import dbmemory
+from osm_common import fslocal
+from osm_common import msglocal
+from osm_common import msgkafka
 import tarfile
 import yaml
 import json
@@ -12,9 +12,9 @@ import logging
 from random import choice as random_choice
 from uuid import uuid4
 from hashlib import sha256, md5
-from dbbase import DbException
-from fsbase import FsException
-from msgbase import MsgException
+from osm_common.dbbase import DbException
+from osm_common.fsbase import FsException
+from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from time import time
 from copy import deepcopy
