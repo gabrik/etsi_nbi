@@ -152,10 +152,10 @@ class Server(object):
                         "<ID>": {"METHODS": ("GET", "DELETE")}
                     },
                     "vim_accounts": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                        "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
                     },
                     "sdns": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE")}
+                        "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
                     },
                 }
             },
@@ -723,7 +723,12 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.NO_CONTENT.value
                     outdata = None
                 else:
-                    outdata = {"id": self.engine.edit_item(session, engine_item, args[1], indata, kwargs)}
+                    outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs)}
+            elif method == "PATCH":
+                if not indata and not kwargs:
+                    raise NbiException("Nothing to update. Provide payload and/or query string",
+                                       HTTPStatus.BAD_REQUEST)
+                outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs)}
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)

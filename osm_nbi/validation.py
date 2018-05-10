@@ -114,6 +114,7 @@ vim_account_new_schema = {
 
 sdn_properties = {
     "name": name_schema,
+    "description": description_schema,
     "dpid": {"type": "string", "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){7}$"},
     "ip": ip_schema,
     "port": port_schema,
@@ -135,7 +136,7 @@ sdn_edit_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": sdn_properties,
-    "required": ["name", "port", 'ip', 'dpid', 'type'],
+    # "required": ["name", "port", 'ip', 'dpid', 'type'],
     "additionalProperties": False
 }
 sdn_port_mapping_schema = {
