@@ -290,53 +290,6 @@ if __name__ == "__main__":
         for t in test_admin_list1:
             test_rest.test(*t)
 
-
-        # nsd CREATE
-        r = test_rest.test("NSD1", "Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors", headers_json, None,
-                           201, {"Location": "/nsd/v1/ns_descriptors/", "Content-Type": "application/json"}, "json")
-        location = r.headers["Location"]
-        nsd_id = location[location.rfind("/")+1:]
-        # print(location, nsd_id)
-
-        # nsd UPLOAD test
-        r = test_rest.test("NSD2", "Onboard NSD step 2 as TEXT", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-                           r_header_text, "@./cirros_ns/cirros_nsd.yaml", 204, None, 0)
-
-        # nsd SHOW OSM format
-        r = test_rest.test("NSD3", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
-                           headers_json, None, 200, r_header_json, "json")
-
-        # nsd SHOW text
-        r = test_rest.test("NSD4", "Show NSD SOL005 text", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-                           headers_text, None, 200, r_header_text, "text")
-
-        # nsd UPLOAD ZIP
-        makedirs("temp", exist_ok=True)
-        tar = tarfile.open("temp/cirros_ns.tar.gz", "w:gz")
-        tar.add("cirros_ns")
-        tar.close()
-        r = test_rest.test("NSD5", "Onboard NSD step 3 replace with ZIP", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-                           r_header_zip, "@b./temp/cirros_ns.tar.gz", 204, None, 0)
-
-        # nsd SHOW OSM format
-        r = test_rest.test("NSD6", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
-                           headers_json, None, 200, r_header_json, "json")
-
-        # nsd SHOW zip
-        r = test_rest.test("NSD7", "Show NSD SOL005 zip", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-                           headers_zip, None, 200, r_header_zip, "zip")
-
-        # nsd SHOW descriptor
-        r = test_rest.test("NSD8", "Show NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}/nsd".format(nsd_id),
-                           headers_text, None, 200, r_header_text, "text")
-        # nsd SHOW actifact
-        r = test_rest.test("NSD9", "Show NSD artifact", "GET", "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm_2x.png".format(nsd_id),
-                           headers_text, None, 200, r_header_octect, "text")
-
-        # nsd DELETE
-        r = test_rest.test("NSD10", "Delete NSD SOL005 text", "DELETE", "/nsd/v1/ns_descriptors/{}".format(nsd_id),
-                           headers_yaml, None, 204, None, 0)
-
         # vnfd CREATE
         r = test_rest.test("VNFD1", "Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages", headers_json, None,
                            201, {"Location": "/vnfpkgm/v1/vnf_packages/", "Content-Type": "application/json"}, "json")
@@ -378,9 +331,71 @@ if __name__ == "__main__":
         r = test_rest.test("VNFD9", "Show VNFD artifact", "GET", "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/cirros-64.png".format(vnfd_id),
                            headers_text, None, 200, r_header_octect, "text")
 
+        # # vnfd DELETE
+        # r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
+        #                    headers_yaml, None, 204, None, 0)
+
+        # nsd CREATE
+        r = test_rest.test("NSD1", "Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors", headers_json, None,
+                           201, {"Location": "/nsd/v1/ns_descriptors/", "Content-Type": "application/json"}, "json")
+        location = r.headers["Location"]
+        nsd_id = location[location.rfind("/")+1:]
+        # print(location, nsd_id)
+
+        # nsd UPLOAD test
+        r = test_rest.test("NSD2", "Onboard NSD with missing vnfd", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content?constituent-vnfd.0.vnfd-id-ref=NONEXISTING-VNFD".format(nsd_id),
+                           r_header_text, "@./cirros_ns/cirros_nsd.yaml", 409, r_header_yaml, "yaml")
+
+        # # VNF_CREATE
+        # r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        #                    r_header_zip, "@b./temp/cirros_vnf.tar.gz", 204, None, 0)
+
+        r = test_rest.test("NSD2", "Onboard NSD step 2 as TEXT", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+                           r_header_text, "@./cirros_ns/cirros_nsd.yaml", 204, None, 0)
+
+        # nsd SHOW OSM format
+        r = test_rest.test("NSD3", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
+                           headers_json, None, 200, r_header_json, "json")
+
+        # nsd SHOW text
+        r = test_rest.test("NSD4", "Show NSD SOL005 text", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+                           headers_text, None, 200, r_header_text, "text")
+
+        # nsd UPLOAD ZIP
+        makedirs("temp", exist_ok=True)
+        tar = tarfile.open("temp/cirros_ns.tar.gz", "w:gz")
+        tar.add("cirros_ns")
+        tar.close()
+        r = test_rest.test("NSD5", "Onboard NSD step 3 replace with ZIP", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+                           r_header_zip, "@b./temp/cirros_ns.tar.gz", 204, None, 0)
+
+        # nsd SHOW OSM format
+        r = test_rest.test("NSD6", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
+                           headers_json, None, 200, r_header_json, "json")
+
+        # nsd SHOW zip
+        r = test_rest.test("NSD7", "Show NSD SOL005 zip", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+                           headers_zip, None, 200, r_header_zip, "zip")
+
+        # nsd SHOW descriptor
+        r = test_rest.test("NSD8", "Show NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}/nsd".format(nsd_id),
+                           headers_text, None, 200, r_header_text, "text")
+        # nsd SHOW actifact
+        r = test_rest.test("NSD9", "Show NSD artifact", "GET", "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm_2x.png".format(nsd_id),
+                           headers_text, None, 200, r_header_octect, "text")
+
+        # vnfd DELETE
+        r = test_rest.test("VNFD10", "Delete VNFD conflict", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
+                           headers_yaml, None, 409, r_header_yaml, "yaml")
+
+        # nsd DELETE
+        r = test_rest.test("NSD10", "Delete NSD SOL005 text", "DELETE", "/nsd/v1/ns_descriptors/{}".format(nsd_id),
+                           headers_yaml, None, 204, None, 0)
+
         # vnfd DELETE
         r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
                            headers_yaml, None, 204, None, 0)
+
 
         print("PASS")
 

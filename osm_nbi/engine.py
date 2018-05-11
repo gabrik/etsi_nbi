@@ -243,7 +243,48 @@ class Engine(object):
                 clean_indata = clean_indata['userDefinedData']
         return clean_indata
 
-    def _validate_new_data(self, session, item, indata, id=None):
+    def _check_dependencies_on_descriptor(self, session, item, descriptor_id):
+        """
+        Check that the descriptor to be deleded is not a dependency of others
+        :param session: client session information
+        :param item: can be vnfds, nsds
+        :param descriptor_id: id of descriptor to be deleted
+        :return: None or raises exception
+        """
+        if item == "vnfds":
+            _filter = {"constituent-vnfd.ANYINDEX.vnfd-id-ref": descriptor_id}
+            if self.get_item_list(session, "nsds", _filter):
+                raise EngineException("There are nsd that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
+        elif item == "nsds":
+            _filter = {"nsdId": descriptor_id}
+            if self.get_item_list(session, "nsrs", _filter):
+                raise EngineException("There are nsr that depends on this NSD", http_code=HTTPStatus.CONFLICT)
+
+    def _check_descriptor_dependencies(self, session, item, descriptor):
+        """
+        Check that the dependent descriptors exist on a new descriptor or edition
+        :param session: client session information
+        :param item: can be nsds, nsrs
+        :param descriptor: descriptor to be inserted or edit
+        :return: None or raises exception
+        """
+        if item == "nsds":
+            if not descriptor.get("constituent-vnfd"):
+                return
+            for vnf in descriptor["constituent-vnfd"]:
+                vnfd_id = vnf["vnfd-id-ref"]
+                if not self.get_item_list(session, "vnfds", {"id": vnfd_id}):
+                    raise EngineException("Descriptor error at 'constituent-vnfd':'vnfd-id-ref'='{}' references a non "
+                                          "existing vnfd".format(vnfd_id), http_code=HTTPStatus.CONFLICT)
+        elif item == "nsrs":
+            if not descriptor.get("nsdId"):
+                return
+            nsd_id = descriptor["nsdId"]
+            if not self.get_item_list(session, "nsds", {"id": nsd_id}):
+                raise EngineException("Descriptor error at nsdId='{}' references a non exist nsd".format(nsd_id),
+                                      http_code=HTTPStatus.CONFLICT)
+
+    def _validate_new_data(self, session, item, indata, id=None, force=False):
         if item == "users":
             if not indata.get("username"):
                 raise EngineException("missing 'username'", HTTPStatus.UNPROCESSABLE_ENTITY)
@@ -271,6 +312,8 @@ class Engine(object):
                                       HTTPStatus.CONFLICT)
 
             # TODO validate with pyangbind
+            if item == "nsds" and not force:
+                self._check_descriptor_dependencies(session, "nsds", indata)
         elif item == "userDefinedData":
             # TODO validate userDefinedData is a keypair values
             pass
@@ -620,7 +663,7 @@ class Engine(object):
             raise EngineException(
                 "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
 
-    def new_item(self, session, item, indata={}, kwargs=None, headers={}):
+    def new_item(self, session, item, indata={}, kwargs=None, headers={}, force=False):
         """
         Creates a new entry into database. For nsds and vnfds it creates an almost empty DISABLED  entry,
         that must be completed with a call to method upload_content
@@ -629,6 +672,7 @@ class Engine(object):
         :param indata: data to be inserted
         :param kwargs: used to override the indata descriptor
         :param headers: http request headers
+        :param force: If True avoid some dependence checks
         :return: _id: identity of the inserted data.
         """
 
@@ -649,7 +693,7 @@ class Engine(object):
                 # in this case the input descriptor is not the data to be stored
                 return self.new_nsr(session, ns_request=content)
 
-            self._validate_new_data(session, item_envelop, content)
+            self._validate_new_data(session, item_envelop, content, force)
             if item in ("nsds", "vnfds"):
                 content = {"_admin": {"userDefinedData": content}}
             self._format_new_data(session, item, content)
@@ -847,7 +891,7 @@ class Engine(object):
 
     def del_item(self, session, item, _id, force=False):
         """
-        Get complete information on an items
+        Delete item by its internal id
         :param session: contains the used login username and working project
         :param item: it can be: users, projects, vnfds, nsds, ...
         :param _id: server id of the item
@@ -858,6 +902,10 @@ class Engine(object):
         # data = self.get_item(item, _id)
         filter = {"_id": _id}
         self._add_delete_filter(session, item, filter)
+        if item in ("vnfds", "nsds") and not force:
+            descriptor = self.get_item(session, item, _id)
+            descriptor_id = descriptor["id"]
+            self._check_dependencies_on_descriptor(session, item, descriptor_id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
@@ -934,7 +982,7 @@ class Engine(object):
                 version["status"]), HTTPStatus.INTERNAL_SERVER_ERROR)
         return
 
-    def _edit_item(self, session, item, id, content, indata={}, kwargs=None):
+    def _edit_item(self, session, item, id, content, indata={}, kwargs=None, force=False):
         if indata:
             indata = self._remove_envelop(item, indata)
 
@@ -971,7 +1019,7 @@ class Engine(object):
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
         _deep_update(content, indata)
-        self._validate_new_data(session, item, content, id)
+        self._validate_new_data(session, item, content, id, force)
         # self._format_new_data(session, item, content)
         self.db.replace(item, id, content)
         if item in ("vim_accounts", "sdns"):
@@ -983,7 +1031,7 @@ class Engine(object):
                 self.msg.write("sdn", "edit", indata)
         return id
 
-    def edit_item(self, session, item, _id, indata={}, kwargs=None):
+    def edit_item(self, session, item, _id, indata={}, kwargs=None, force=False):
         """
         Update an existing entry at database
         :param session: contains the used login username and working project
@@ -991,9 +1039,10 @@ class Engine(object):
         :param _id: identifier to be updated
         :param indata: data to be inserted
         :param kwargs: used to override the indata descriptor
+        :param force: If True avoid some dependence checks
         :return: dictionary, raise exception if not found.
         """
 
         content = self.get_item(session, item, _id)
-        return self._edit_item(session, item, _id, content, indata, kwargs)
+        return self._edit_item(session, item, _id, content, indata, kwargs, force)
 

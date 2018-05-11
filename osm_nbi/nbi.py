@@ -343,6 +343,8 @@ class Server(object):
             raise NbiException(error_text + str(exc), HTTPStatus.BAD_REQUEST)
         except KeyError as exc:
             raise NbiException("Query string error: " + str(exc), HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            raise NbiException(error_text + str(exc), HTTPStatus.BAD_REQUEST)
 
     @staticmethod
     def _format_out(data, session=None, _format=None):
@@ -621,6 +623,10 @@ class Server(object):
                 method = kwargs.pop("METHOD")
             else:
                 method = cherrypy.request.method
+            if kwargs and "FORCE" in kwargs:
+                force = kwargs.pop("FORCE")
+            else:
+                force = False
 
             self._check_valid_url_method(method, topic, version, item, _id, item2, *args)
 
@@ -670,7 +676,8 @@ class Server(object):
                 if item in ("ns_descriptors_content", "vnf_packages_content"):
                     _id = cherrypy.request.headers.get("Transaction-Id")
                     if not _id:
-                        _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers)
+                        _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers,
+                                                   force=force)
                         rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
                     completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
                     if completed:
@@ -679,7 +686,7 @@ class Server(object):
                         cherrypy.response.headers["Transaction-Id"] = _id
                     outdata = {"id": _id}
                 elif item == "ns_instances_content":
-                    _id = self.engine.new_item(session, engine_item, indata, kwargs)
+                    _id = self.engine.new_item(session, engine_item, indata, kwargs, force=force)
                     rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
                     self.engine.ns_action(session, _id, "instantiate", {}, None)
                     self._set_location_header(topic, version, item, _id)
@@ -690,7 +697,8 @@ class Server(object):
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 else:
-                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers)
+                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers,
+                                               force=force)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
                     # TODO form NsdInfo when item in ("ns_descriptors", "vnf_packages")
@@ -706,7 +714,6 @@ class Server(object):
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
-                        force = kwargs.get("FORCE")
                         self.engine.del_item(session, engine_item, _id, force)
                         cherrypy.response.status = HTTPStatus.NO_CONTENT.value
                 if engine_item in ("vim_accounts", "sdns"):
@@ -723,12 +730,12 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.NO_CONTENT.value
                     outdata = None
                 else:
-                    outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs)}
+                    outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)}
             elif method == "PATCH":
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
-                outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs)}
+                outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)}
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
