@@ -7,6 +7,9 @@ import json
 import yaml
 import html_out as html
 import logging
+import logging.handlers
+import getopt
+import sys
 from engine import Engine, EngineException
 from osm_common.dbbase import DbException
 from osm_common.fsbase import FsException
@@ -16,7 +19,7 @@ from base64 import standard_b64decode
 from http import HTTPStatus
 #from http.client import responses as http_responses
 from codecs import getreader
-from os import environ
+from os import environ, path
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -688,11 +691,11 @@ class Server(object):
                 elif item == "ns_instances_content":
                     _id = self.engine.new_item(session, engine_item, indata, kwargs, force=force)
                     rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
-                    self.engine.ns_action(session, _id, "instantiate", {}, None)
+                    self.engine.ns_operation(session, _id, "instantiate", {}, None)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
                 elif item == "ns_instances" and item2:
-                    _id = self.engine.ns_action(session, _id, item2, indata, kwargs)
+                    _id = self.engine.ns_operation(session, _id, item2, indata, kwargs)
                     self._set_location_header(topic, version, "ns_lcm_op_occs", _id)
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
@@ -710,7 +713,7 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
                     if item == "ns_instances_content":
-                        opp_id = self.engine.ns_action(session, _id, "terminate", {"autoremove": True}, None)
+                        opp_id = self.engine.ns_operation(session, _id, "terminate", {"autoremove": True}, None)
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
@@ -796,10 +799,10 @@ def _start_service():
                 update_dict['server.socket_port'] = int(v)
             elif k == 'OSMNBI_SOCKET_HOST' or k == 'OSMNBI_SERVER_HOST':
                 update_dict['server.socket_host'] = v
-            elif k1 == "server":
-                update_dict['server' + k2] = v
-                # TODO add more entries
+            elif k1 in ("server", "test", "auth", "log"):
+                update_dict[k1 + '.' + k2] = v
             elif k1 in ("message", "database", "storage"):
+                # k2 = k2.replace('_', '.')
                 if k2 == "port":
                     engine_config[k1][k2] = int(v)
                 else:
@@ -811,6 +814,7 @@ def _start_service():
 
     if update_dict:
         cherrypy.config.update(update_dict)
+        engine_config["global"].update(update_dict)
 
     # logging cherrypy
     log_format_simple = "%(asctime)s %(levelname)s %(name)s %(filename)s:%(lineno)s %(message)s"
@@ -820,8 +824,8 @@ def _start_service():
     logger_cherry = logging.getLogger("cherrypy")
     logger_nbi = logging.getLogger("nbi")
 
-    if "logfile" in engine_config["global"]:
-        file_handler = logging.handlers.RotatingFileHandler(engine_config["global"]["logfile"],
+    if "log.file" in engine_config["global"]:
+        file_handler = logging.handlers.RotatingFileHandler(engine_config["global"]["log.file"],
                                                             maxBytes=100e6, backupCount=9, delay=0)
         file_handler.setFormatter(log_formatter_simple)
         logger_cherry.addHandler(file_handler)
@@ -837,9 +841,9 @@ def _start_service():
             str_handler.setFormatter(log_formatter_cherry)
             logger.addHandler(str_handler)
 
-    if engine_config["global"].get("loglevel"):
-        logger_cherry.setLevel(engine_config["global"]["loglevel"])
-        logger_nbi.setLevel(engine_config["global"]["loglevel"])
+    if engine_config["global"].get("log.level"):
+        logger_cherry.setLevel(engine_config["global"]["log.level"])
+        logger_nbi.setLevel(engine_config["global"]["log.level"])
 
     # logging other modules
     for k1, logname in {"message": "nbi.msg", "database": "nbi.db", "storage": "nbi.fs"}.items():
@@ -869,7 +873,7 @@ def _stop_service():
     cherrypy.tree.apps['/osm'].root.engine.stop()
     cherrypy.log.error("Stopping osm_nbi")
 
-def nbi():
+def nbi(config_file):
     # conf = {
     #     '/': {
     #         #'request.dispatch': cherrypy.dispatch.MethodDispatcher(),
@@ -889,8 +893,51 @@ def nbi():
     #    'tools.auth_basic.checkpassword': validate_password})
     cherrypy.engine.subscribe('start', _start_service)
     cherrypy.engine.subscribe('stop', _stop_service)
-    cherrypy.quickstart(Server(), '/osm', "nbi.cfg")
+    cherrypy.quickstart(Server(), '/osm', config_file)
+
+
+def usage():
+    print("""Usage: {} [options]
+        -c|--config [configuration_file]: loads the configuration file (default: ./nbi.cfg)
+        -h|--help: shows this help
+        """.format(sys.argv[0]))
+        # --log-socket-host HOST: send logs to this host")
+        # --log-socket-port PORT: send logs using this port (default: 9022)")
 
 
 if __name__ == '__main__':
-    nbi()
+    try:
+        # load parameters and configuration
+        opts, args = getopt.getopt(sys.argv[1:], "hvc:", ["config=", "help"])
+        # TODO add  "log-socket-host=", "log-socket-port=", "log-file="
+        config_file = None
+        for o, a in opts:
+            if o in ("-h", "--help"):
+                usage()
+                sys.exit()
+            elif o in ("-c", "--config"):
+                config_file = a
+            # elif o == "--log-socket-port":
+            #     log_socket_port = a
+            # elif o == "--log-socket-host":
+            #     log_socket_host = a
+            # elif o == "--log-file":
+            #     log_file = a
+            else:
+                assert False, "Unhandled option"
+        if config_file:
+            if not path.isfile(config_file):
+                print("configuration file '{}' that not exist".format(config_file), file=sys.stderr)
+                exit(1)
+        else:
+            for config_file in (__file__[:__file__.rfind(".")] + ".cfg", "./nbi.cfg", "/etc/osm/nbi.cfg"):
+                if path.isfile(config_file):
+                    break
+            else:
+                print("No configuration file 'nbi.cfg' found neither at local folder nor at /etc/osm/", file=sys.stderr)
+                exit(1)
+        nbi(config_file)
+    except getopt.GetoptError as e:
+        print(str(e), file=sys.stderr)
+        # usage()
+        exit(1)

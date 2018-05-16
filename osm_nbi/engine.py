@@ -325,6 +325,25 @@ class Engine(object):
                 raise EngineException("name '{}' already exists for {}".format(indata["name"], item),
                                       HTTPStatus.CONFLICT)
 
+    def _check_ns_operation(self, session, nsr, operation, indata):
+        """
+        Check that user has enter right parameters for the operation
+        :param session:
+        :param operation: it can be: instantiate, terminate, action, TODO: update, heal
+        :param indata: descriptor with the parameters of the operation
+        :return: None
+        """
+        if operation == "action":
+            if indata.get("vnf_member_index"):
+                indata["member_vnf_index"] = indata.pop("vnf_member_index")    # for backward compatibility
+            for vnf in nsr["nsd"]["constituent-vnfd"]:
+                if indata["member_vnf_index"] == vnf["member-vnf-index"]:
+                    # TODO get vnfd, check primitives
+                    break
+            else:
+                raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the nsd "
+                                          "constituent-vnfd".format(indata["member_vnf_index"]))
+
     def _format_new_data(self, session, item, indata):
         now = time()
         if not "_admin" in indata:
@@ -711,7 +730,7 @@ class Engine(object):
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
-    def new_nslcmop(self, session, nsInstanceId, action, params):
+    def new_nslcmop(self, session, nsInstanceId, operation, params):
         now = time()
         _id = str(uuid4())
         nslcmop = {
@@ -720,7 +739,7 @@ class Engine(object):
             "operationState": "PROCESSING",  # COMPLETED,PARTIALLY_COMPLETED,FAILED_TEMP,FAILED,ROLLING_BACK,ROLLED_BACK
             "statusEnteredTime": now,
             "nsInstanceId": nsInstanceId,
-            "lcmOperationType": action,
+            "lcmOperationType": operation,
             "startTime": now,
             "isAutomaticInvocation": False,
             "operationParams": params,
@@ -732,40 +751,40 @@ class Engine(object):
         }
         return nslcmop
 
-    def ns_action(self, session, nsInstanceId, action, indata, kwargs=None):
+    def ns_operation(self, session, nsInstanceId, operation, indata, kwargs=None):
         """
-        Performs a new action over a ns
+        Performs a new operation over a ns
         :param session: contains the used login username and working project
-        :param nsInstanceId: _id of the nsr to perform the action
-        :param action: it can be: instantiate, terminate, action, TODO: update, heal
-        :param indata: descriptor with the parameters of the action
+        :param nsInstanceId: _id of the nsr to perform the operation
+        :param operation: it can be: instantiate, terminate, action, TODO: update, heal
+        :param indata: descriptor with the parameters of the operation
         :param kwargs: used to override the indata descriptor
         :return: id of the nslcmops
         """
         try:
             # Override descriptor with query string kwargs
             self._update_descriptor(indata, kwargs)
-            validate_input(indata, "ns_" + action, new=True)
+            validate_input(indata, "ns_" + operation, new=True)
             # get ns from nsr_id
             nsr = self.get_item(session, "nsrs", nsInstanceId)
             if not nsr["_admin"].get("nsState") or nsr["_admin"]["nsState"] == "NOT_INSTANTIATED":
-                if action == "terminate" and indata.get("autoremove"):
+                if operation == "terminate" and indata.get("autoremove"):
                     # NSR must be deleted
                     return self.del_item(session, "nsrs", nsInstanceId)
-                if action != "instantiate":
+                if operation != "instantiate":
                     raise EngineException("ns_instance '{}' cannot be '{}' because it is not instantiated".format(
-                        nsInstanceId, action), HTTPStatus.CONFLICT)
+                        nsInstanceId, operation), HTTPStatus.CONFLICT)
             else:
-                if action == "instantiate" and not indata.get("force"):
+                if operation == "instantiate" and not indata.get("force"):
                     raise EngineException("ns_instance '{}' cannot be '{}' because it is already instantiated".format(
-                        nsInstanceId, action), HTTPStatus.CONFLICT)
+                        nsInstanceId, operation), HTTPStatus.CONFLICT)
             indata["nsInstanceId"] = nsInstanceId
-            # TODO
-            nslcmop = self.new_nslcmop(session, nsInstanceId, action, indata)
+            self._check_ns_operation(session, nsr, operation, indata)
+            nslcmop = self.new_nslcmop(session, nsInstanceId, operation, indata)
             self._format_new_data(session, "nslcmops", nslcmop)
             _id = self.db.create("nslcmops", nslcmop)
             indata["_id"] = _id
-            self.msg.write("ns", action, nslcmop)
+            self.msg.write("ns", operation, nslcmop)
             return _id
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
@@ -911,7 +930,7 @@ class Engine(object):
             nsr = self.db.get_one(item, filter)
             if nsr["_admin"]["nsState"] == "INSTANTIATED" and not force:
                 raise EngineException("nsr '{}' cannot be deleted because it is in 'INSTANTIATED' state. "
-                                      "Launch 'terminate' action first; or force deletion".format(_id),
+                                      "Launch 'terminate' operation first; or force deletion".format(_id),
                                       http_code=HTTPStatus.CONFLICT)
             v = self.db.del_one(item, {"_id": _id})
             self.db.del_list("nslcmops", {"nsInstanceId": _id})

@@ -55,11 +55,12 @@ ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
-        "vnf_member_index": name_schema,
+        "member_vnf_index": name_schema,
+        "vnf_member_index": name_schema,  # TODO for backward compatibility. To remove in future
         "primitive": name_schema,
         "primitive_params": {"type": "object"},
     },
-    "required": ["vnf_member_index", "primitive", "primitive_params"],
+    "required": ["primitive", "primitive_params"],   # TODO add member_vnf_index
     "additionalProperties": False
 }
 

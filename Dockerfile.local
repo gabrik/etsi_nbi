@@ -51,6 +51,9 @@ ENV OSMNBI_LOG_LEVEL       DEBUG
 ENV OSMNBI_MESSAGE_DRIVER  kafka
 ENV OSMNBI_MESSAGE_HOST    kafka
 ENV OSMNBI_MESSAGE_PORT    9092
+# logs
+ENV OSMNBI_LOG_FILE        /app/log/nbi.log
+ENV OSMNBI_LOG_LEVEL       DEBUG
 
 # Run app.py when the container launches
 CMD ["python3", "nbi.py"]
