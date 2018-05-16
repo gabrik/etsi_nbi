@@ -1,12 +1,9 @@
 #! /usr/bin/python3
 # -*- coding: utf-8 -*-
 
-import os.path
 import getopt
 import sys
-import base64
 import requests
-import json
 from os.path import getsize, basename
 from hashlib import md5
 
@@ -28,8 +25,7 @@ def usage():
     return
 
 
-if __name__=="__main__":
-
+if __name__ == "__main__":
     try:
         # load parameters and configuration
         opts, args = getopt.getopt(sys.argv[1:], "hvu:s:f:t:",
@@ -42,7 +38,7 @@ if __name__=="__main__":
 
         for o, a in opts:
             if o == "--version":
-                print ("upload version " + __version__ + ' ' + version_date)
+                print("upload version " + __version__ + ' ' + version_date)
                 sys.exit()
             elif o in ("-v", "--verbose"):
                 verbose += 1

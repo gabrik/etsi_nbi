@@ -41,7 +41,7 @@ def _deep_update(dict_to_change, dict_reference):
         if dict_reference[k] is None:   # None->Anything
             if k in dict_to_change:
                 del dict_to_change[k]
-        elif not isinstance(dict_reference[k], dict):  #  NotDict->Anything
+        elif not isinstance(dict_reference[k], dict):  # NotDict->Anything
             dict_to_change[k] = dict_reference[k]
         elif k not in dict_to_change:  # Dict->Empty
             dict_to_change[k] = deepcopy(dict_reference[k])
@@ -321,7 +321,10 @@ class Engine(object):
         elif item == "nsrs":
             pass
         elif item == "vim_accounts" or item == "sdns":
-            if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
+            filter = {"name": indata.get("name")}
+            if id:
+                filter["_id.neq"] = id
+            if self.db.get_one(item, filter, fail_on_empty=False, fail_on_more=False):
                 raise EngineException("name '{}' already exists for {}".format(indata["name"], item),
                                       HTTPStatus.CONFLICT)
 
@@ -342,11 +345,11 @@ class Engine(object):
                     break
             else:
                 raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the nsd "
-                                          "constituent-vnfd".format(indata["member_vnf_index"]))
+                                      "constituent-vnfd".format(indata["member_vnf_index"]))
 
     def _format_new_data(self, session, item, indata):
         now = time()
-        if not "_admin" in indata:
+        if "_admin" not in indata:
             indata["_admin"] = {}
         indata["_admin"]["created"] = now
         indata["_admin"]["modified"] = now
@@ -476,7 +479,8 @@ class Engine(object):
                         storage["pkg-dir"] = tarname_path[0]
                         if len(tarname_path) == 2:
                             if descriptor_file_name:
-                                raise EngineException("Found more than one descriptor file at package descriptor tar.gz")
+                                raise EngineException(
+                                    "Found more than one descriptor file at package descriptor tar.gz")
                             descriptor_file_name = tarname
                 if not descriptor_file_name:
                     raise EngineException("Not found any descriptor file at package descriptor tar.gz")
@@ -547,11 +551,12 @@ class Engine(object):
                 "description": ns_request.get("nsDescription", ""),
                 "constituent-vnfr-ref": [],
 
-                "operational-status": "init",    #  typedef ns-operational-
-                "config-status": "init",         #  typedef config-states
+                "operational-status": "init",    # typedef ns-operational-
+                "config-status": "init",         # typedef config-states
                 "detailed-status": "scheduled",
 
-                "orchestration-progress": {},  # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
+                "orchestration-progress": {},
+                # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
 
                 "crete-time": now,
                 "nsd-name-ref": nsd["name"],
@@ -590,7 +595,7 @@ class Engine(object):
                     "nsr-id-ref": nsr_id,
                     "member-vnf-index-ref": member_vnf["member-vnf-index"],
                     "created-time": now,
-                    # "vnfd": vnfd,        # at OSM model. TODO can it be removed in the future to avoid data duplication?
+                    # "vnfd": vnfd,        # at OSM model.but removed to avoid data duplication TODO: revise
                     "vnfd-ref": vnfd_id,
                     "vnfd-id": vnfr_id,    # not at OSM model, but useful
                     "vim-account-id": None,
@@ -650,15 +655,16 @@ class Engine(object):
     @staticmethod
     def _update_descriptor(desc, kwargs):
         """
-        Update descriptor with the kwargs
-        :param kwargs:
+        Update descriptor with the kwargs. It contains dot separated keys
+        :param desc: dictionary to be updated
+        :param kwargs: plain dictionary to be used for updating.
         :return:
         """
         if not kwargs:
             return
         try:
             for k, v in kwargs.items():
-                update_content = content
+                update_content = desc
                 kitem_old = None
                 klist = k.split(".")
                 for kitem in klist:
@@ -834,7 +840,7 @@ class Engine(object):
         content = self.get_item(session, item, _id)
         if content["_admin"]["onboardingState"] != "ONBOARDED":
             raise EngineException("Cannot get content because this resource is not at 'ONBOARDED' state. "
-                "onboardingState is {}".format(content["_admin"]["onboardingState"]),
+                                  "onboardingState is {}".format(content["_admin"]["onboardingState"]),
                                   http_code=HTTPStatus.CONFLICT)
         storage = content["_admin"]["storage"]
         if path is not None and path != "$DESCRIPTOR":   # artifacts
@@ -858,12 +864,12 @@ class Engine(object):
             return self.fs.file_open((storage['folder'], storage['descriptor']), "r"), "text/plain"
         elif storage.get('pkg-dir') and not accept_zip:
             raise EngineException("Packages that contains several files need to be retrieved with 'application/zip'"
-                                      "Accept header", http_code=HTTPStatus.NOT_ACCEPTABLE)
+                                  "Accept header", http_code=HTTPStatus.NOT_ACCEPTABLE)
         else:
             if not storage.get('zipfile'):
                 # TODO generate zipfile if not present
-                raise EngineException("Only allowed 'text/plain' Accept header for this descriptor. To be solved in future versions"
-                                      "", http_code=HTTPStatus.NOT_ACCEPTABLE)
+                raise EngineException("Only allowed 'text/plain' Accept header for this descriptor. To be solved in "
+                                      "future versions", http_code=HTTPStatus.NOT_ACCEPTABLE)
             return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), "application/zip"
 
     def get_item_list(self, session, item, filter={}):
@@ -889,7 +895,6 @@ class Engine(object):
         :param _id: server id of the item
         :return: dictionary, raise exception if not found.
         """
-        database_item = item
         filter = {"_id": _id}
         # TODO add admin to filter, validate rights
         # TODO transform data for SOL005 URL requests
@@ -1033,7 +1038,7 @@ class Engine(object):
                 raise EngineException(
                     "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
         try:
-            validate_input(content, item, new=False)
+            validate_input(indata, item, new=False)
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
@@ -1064,4 +1069,3 @@ class Engine(object):
 
         content = self.get_item(session, item, _id)
         return self._edit_item(session, item, _id, content, indata, kwargs, force)
-

@@ -15,9 +15,7 @@ from osm_common.dbbase import DbException
 from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from base64 import standard_b64decode
-#from os import getenv
 from http import HTTPStatus
-#from http.client import responses as http_responses
 from codecs import getreader
 from os import environ, path
 
@@ -32,8 +30,8 @@ database_version = '1.0'
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
 URL: /osm                                                       GET     POST    PUT     DELETE  PATCH
         /nsd/v1                                                 O       O
-            /ns_descriptors_content                             O       O       
-                /<nsdInfoId>                                    O       O       O       O     
+            /ns_descriptors_content                             O       O
+                /<nsdInfoId>                                    O       O       O       O
             /ns_descriptors                                     O5      O5
                 /<nsdInfoId>                                    O5                      O5      5
                     /nsd_content                                O5              O5
@@ -47,7 +45,7 @@ URL: /osm                                                       GET     POST    
 
         /vnfpkgm/v1
             /vnf_packages_content                               O       O
-                /<vnfPkgId>                                     O                       O     
+                /<vnfPkgId>                                     O                       O
             /vnf_packages                                       O5      O5
                 /<vnfPkgId>                                     O5                      O5      5
                     /package_content                            O5               O5
@@ -59,9 +57,9 @@ URL: /osm                                                       GET     POST    
 
         /nslcm/v1
             /ns_instances_content                               O       O
-                /<nsInstanceId>                                 O                       O     
+                /<nsInstanceId>                                 O                       O
             /ns_instances                                       5       5
-                /<nsInstanceId>                                 5                       5     
+                /<nsInstanceId>                                 5                       5
                     instantiate                                         O5
                     terminate                                           O5
                     action                                              O
@@ -76,51 +74,59 @@ URL: /osm                                                       GET     POST    
                 /<subscriptionId>                               5                       X
         /admin/v1
             /tokens                                             O       O
-                /<id>                                           O                       O     
+                /<id>                                           O                       O
             /users                                              O       O
-                /<id>                                           O                       O     
+                /<id>                                           O                       O
             /projects                                           O       O
-                /<id>                                           O                       O     
+                /<id>                                           O                       O
             /vims_accounts  (also vims for compatibility)       O       O
-                /<id>                                           O                       O       O     
+                /<id>                                           O                       O       O
             /sdns                                               O       O
-                /<id>                                           O                       O       O     
+                /<id>                                           O                       O       O
 
-query string.
-    <attrName>[.<attrName>...]*[.<op>]=<value>[,<value>...]&...
-    op: "eq"(or empty to one or the values) | "neq" (to any of the values) | "gt" | "lt" | "gte" | "lte" | "cont" | "ncont"
-    all_fields, fields=x,y,.., exclude_default, exclude_fields=x,y,...
+query string:
+    Follows SOL005 section 4.3.2 It contains extra METHOD to override http method, FORCE to force.
+    For filtering inside array, it must select the element of the array, or add ANYINDEX to apply the filtering over any
+    item of the array, that is, pass if any item of the array pass the filter.
+    It allows both ne and neq for not equal
+    TODO: 4.3.3 Attribute selectors
+        all_fields, fields=x,y,.., exclude_default, exclude_fields=x,y,...
         (none)	… same as “exclude_default”
         all_fields	… all attributes.
-        fields=<list>	… all attributes except all complex attributes with minimum cardinality of zero that are not conditionally mandatory, and that are not provided in <list>.
-        exclude_fields=<list>	… all attributes except those complex attributes with a minimum cardinality of zero that are not conditionally mandatory, and that are provided in <list>.
-        exclude_default	… all attributes except those complex attributes with a minimum cardinality of zero that are not conditionally mandatory, and that are part of the "default exclude set" defined in the present specification for the particular resource
-        exclude_default and include=<list>	… all attributes except those complex attributes with a minimum cardinality of zero that are not conditionally mandatory and that are part of the "default exclude set" defined in the present specification for the particular resource, but that are not part of <list>
+        fields=<list>	… all attributes except all complex attributes with minimum cardinality of zero that are not
+        conditionally mandatory, and that are not provided in <list>.
+        exclude_fields=<list>	… all attributes except those complex attributes with a minimum cardinality of zero that
+        are not conditionally mandatory, and that are provided in <list>.
+        exclude_default	… all attributes except those complex attributes with a minimum cardinality of zero that are not
+        conditionally mandatory, and that are part of the "default exclude set" defined in the present specification for
+        the particular resource
+        exclude_default and include=<list>	… all attributes except those complex attributes with a minimum cardinality
+        of zero that are not conditionally mandatory and that are part of the "default exclude set" defined in the
+        present specification for the particular resource, but that are not part of <list>
 Header field name	Reference	Example	Descriptions
     Accept	IETF RFC 7231 [19]	application/json	Content-Types that are acceptable for the response.
     This header field shall be present if the response is expected to have a non-empty message body.
     Content-Type	IETF RFC 7231 [19]	application/json	The MIME type of the body of the request.
     This header field shall be present if the request has a non-empty message body.
-    Authorization	IETF RFC 7235 [22]	Bearer mF_9.B5f-4.1JqM 	The authorization token for the request. Details are specified in clause 4.5.3.
+    Authorization	IETF RFC 7235 [22]	Bearer mF_9.B5f-4.1JqM 	The authorization token for the request.
+    Details are specified in clause 4.5.3.
     Range	IETF RFC 7233 [21]	1000-2000	Requested range of bytes from a file
 Header field name	Reference	Example	Descriptions
     Content-Type	IETF RFC 7231 [19]	application/json	The MIME type of the body of the response.
     This header field shall be present if the response has a non-empty message body.
-    Location	IETF RFC 7231 [19]	http://www.example.com/vnflcm/v1/vnf_instances/123	Used in redirection, or when a new resource has been created.
+    Location	IETF RFC 7231 [19]	http://www.example.com/vnflcm/v1/vnf_instances/123	Used in redirection, or when a
+    new resource has been created.
     This header field shall be present if the response status code is 201 or 3xx.
-    In the present document this header field is also used if the response status code is 202 and a new resource was created.
-    WWW-Authenticate	IETF RFC 7235 [22]	Bearer realm="example"	Challenge if the corresponding HTTP request has not provided authorization, or error details if the corresponding HTTP request has provided an invalid authorization token.
-    Accept-Ranges	IETF RFC 7233 [21]	bytes	Used by the Server to signal whether or not it supports ranges for certain resources.
-    Content-Range	IETF RFC 7233 [21]	bytes 21010-47021/ 47022	Signals the byte range that is contained in the response, and the total length of the file.
+    In the present document this header field is also used if the response status code is 202 and a new resource was
+    created.
+    WWW-Authenticate	IETF RFC 7235 [22]	Bearer realm="example"	Challenge if the corresponding HTTP request has not
+    provided authorization, or error details if the corresponding HTTP request has provided an invalid authorization
+    token.
+    Accept-Ranges	IETF RFC 7233 [21]	bytes	Used by the Server to signal whether or not it supports ranges for
+    certain resources.
+    Content-Range	IETF RFC 7233 [21]	bytes 21010-47021/ 47022	Signals the byte range that is contained in the
+    response, and the total length of the file.
     Retry-After	IETF RFC 7231 [19]	Fri, 31 Dec 1999 23:59:59 GMT
-
-    or
-
-    120	Used to indicate how long the user agent ought to wait before making a follow-up request.
-    It can be used with 503 responses.
-    The value of this field can be an HTTP-date or a number of seconds to delay after the response is received.
-
-    #TODO http header for partial uploads: Content-Range: "bytes 0-1199/15000". Id is returned first time and send in following chunks
 """
 
 
@@ -143,87 +149,85 @@ class Server(object):
             "admin": {
                 "v1": {
                     "tokens": {"METHODS": ("GET", "POST", "DELETE"),
-                        "<ID>": { "METHODS": ("GET", "DELETE")}
-                    },
+                               "<ID>": {"METHODS": ("GET", "DELETE")}
+                               },
                     "users": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
-                    },
+                              "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
+                              },
                     "projects": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE")}
-                    },
+                                 "<ID>": {"METHODS": ("GET", "DELETE")}
+                                 },
                     "vims": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE")}
-                    },
+                             "<ID>": {"METHODS": ("GET", "DELETE")}
+                             },
                     "vim_accounts": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
-                    },
+                                     "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
+                                     },
                     "sdns": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
-                    },
+                             "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
+                             },
                 }
             },
             "nsd": {
                 "v1": {
-                    "ns_descriptors_content": { "METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
-                    },
-                    "ns_descriptors": { "METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",
-                            "nsd_content": { "METHODS": ("GET", "PUT")},
-                            "nsd": {"METHODS": "GET"},  # descriptor inside package
-                            "artifacts": {"*": {"METHODS": "GET"}}
-                        }
-
-                    },
+                    "ns_descriptors_content": {"METHODS": ("GET", "POST"),
+                                               "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
+                                               },
+                    "ns_descriptors": {"METHODS": ("GET", "POST"),
+                                       "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",
+                                                "nsd_content": {"METHODS": ("GET", "PUT")},
+                                                "nsd": {"METHODS": "GET"},  # descriptor inside package
+                                                "artifacts": {"*": {"METHODS": "GET"}}
+                                                }
+                                       },
                     "pnf_descriptors": {"TODO": ("GET", "POST"),
-                       "<ID>": {"TODO": ("GET", "DELETE", "PATCH"),
-                            "pnfd_content": {"TODO": ("GET", "PUT")}
-                        }
-                    },
+                                        "<ID>": {"TODO": ("GET", "DELETE", "PATCH"),
+                                                 "pnfd_content": {"TODO": ("GET", "PUT")}
+                                                 }
+                                        },
                     "subscriptions": {"TODO": ("GET", "POST"),
-                        "<ID>": {"TODO": ("GET", "DELETE"),}
-                    },
+                                      "<ID>": {"TODO": ("GET", "DELETE")}
+                                      },
                 }
             },
             "vnfpkgm": {
                 "v1": {
-                    "vnf_packages_content": { "METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
-                    },
-                    "vnf_packages": { "METHODS": ("GET", "POST"),
-                        "<ID>": { "METHODS": ("GET", "DELETE"), "TODO": "PATCH",  # GET: vnfPkgInfo
-                            "package_content": { "METHODS": ("GET", "PUT"),         # package
-                                "upload_from_uri": {"TODO": "POST"}
-                            },
-                            "vnfd": {"METHODS": "GET"},                    # descriptor inside package
-                            "artifacts": {"*": {"METHODS": "GET"}}
-                        }
-
-                    },
+                    "vnf_packages_content": {"METHODS": ("GET", "POST"),
+                                             "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
+                                             },
+                    "vnf_packages": {"METHODS": ("GET", "POST"),
+                                     "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",  # GET: vnfPkgInfo
+                                              "package_content": {"METHODS": ("GET", "PUT"),         # package
+                                                                  "upload_from_uri": {"TODO": "POST"}
+                                                                  },
+                                              "vnfd": {"METHODS": "GET"},                    # descriptor inside package
+                                              "artifacts": {"*": {"METHODS": "GET"}}
+                                              }
+                                     },
                     "subscriptions": {"TODO": ("GET", "POST"),
-                        "<ID>": {"TODO": ("GET", "DELETE"),}
-                    },
+                                      "<ID>": {"TODO": ("GET", "DELETE")}
+                                      },
                 }
             },
             "nslcm": {
                 "v1": {
                     "ns_instances_content": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"METHODS": ("GET", "DELETE")}
-                    },
+                                             "<ID>": {"METHODS": ("GET", "DELETE")}
+                                             },
                     "ns_instances": {"METHODS": ("GET", "POST"),
-                        "<ID>": {"TODO": ("GET", "DELETE"),
-                             "scale": {"TODO": "POST"},
-                             "terminate": {"METHODS": "POST"},
-                             "instantiate": {"METHODS": "POST"},
-                             "action": {"METHODS": "POST"},
-                        }
-                    },
+                                     "<ID>": {"TODO": ("GET", "DELETE"),
+                                              "scale": {"TODO": "POST"},
+                                              "terminate": {"METHODS": "POST"},
+                                              "instantiate": {"METHODS": "POST"},
+                                              "action": {"METHODS": "POST"},
+                                              }
+                                     },
                     "ns_lcm_op_occs": {"METHODS": "GET",
-                        "<ID>": {"METHODS": "GET"},
-                    },
+                                       "<ID>": {"METHODS": "GET"},
+                                       },
                     "vnfrs": {"METHODS": ("GET"),
-                        "<ID>": {"METHODS": ("GET")}
-                    },
+                              "<ID>": {"METHODS": ("GET")}
+                              },
                 }
             },
         }
@@ -400,7 +404,7 @@ class Server(object):
                 outdata = "Index page"
             else:
                 raise cherrypy.HTTPError(HTTPStatus.METHOD_NOT_ALLOWED.value,
-                                 "Method {} not allowed for tokens".format(cherrypy.request.method))
+                                         "Method {} not allowed for tokens".format(cherrypy.request.method))
 
             return self._format_out(outdata, session)
 
@@ -462,7 +466,6 @@ class Server(object):
                     session = self._authorization()
                     token_id = session["_id"]
                 outdata = self.engine.del_token(token_id)
-                oudata = None
                 session = None
                 cherrypy.session['Authorization'] = "logout"
                 # cherrypy.response.cookie["Authorization"] = token_id
@@ -588,7 +591,7 @@ class Server(object):
                 raise NbiException("Unexpected URL item {}".format(arg), HTTPStatus.METHOD_NOT_ALLOWED)
         if "TODO" in reference and method in reference["TODO"]:
             raise NbiException("Method {} not supported yet for this URL".format(method), HTTPStatus.NOT_IMPLEMENTED)
-        elif "METHODS" in reference and not method in reference["METHODS"]:
+        elif "METHODS" in reference and method not in reference["METHODS"]:
             raise NbiException("Method {} not supported for this URL".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
         return
 
@@ -669,7 +672,7 @@ class Server(object):
                     else:
                         path = None
                     file, _format = self.engine.get_file(session, engine_item, _id, path,
-                                                            cherrypy.request.headers.get("Accept"))
+                                                         cherrypy.request.headers.get("Accept"))
                     outdata = file
                 elif not _id:
                     outdata = self.engine.get_item_list(session, engine_item, kwargs)
@@ -682,7 +685,8 @@ class Server(object):
                         _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers,
                                                    force=force)
                         rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
-                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
+                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
+                                                           cherrypy.request.headers)
                     if completed:
                         self._set_location_header(topic, version, item, _id)
                     else:
@@ -727,7 +731,8 @@ class Server(object):
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
                 if item2 in ("nsd_content", "package_content"):
-                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs, cherrypy.request.headers)
+                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
+                                                           cherrypy.request.headers)
                     if not completed:
                         cherrypy.response.headers["Transaction-Id"] = id
                     cherrypy.response.status = HTTPStatus.NO_CONTENT.value
@@ -851,7 +856,7 @@ def _start_service():
         logger_module = logging.getLogger(logname)
         if "logfile" in engine_config[k1]:
             file_handler = logging.handlers.RotatingFileHandler(engine_config[k1]["logfile"],
-                                                             maxBytes=100e6, backupCount=9, delay=0)
+                                                                maxBytes=100e6, backupCount=9, delay=0)
             file_handler.setFormatter(log_formatter_simple)
             logger_module.addHandler(file_handler)
         if "loglevel" in engine_config[k1]:
@@ -872,6 +877,7 @@ def _stop_service():
     """
     cherrypy.tree.apps['/osm'].root.engine.stop()
     cherrypy.log.error("Stopping osm_nbi")
+
 
 def nbi(config_file):
     # conf = {
@@ -901,8 +907,8 @@ def usage():
         -c|--config [configuration_file]: loads the configuration file (default: ./nbi.cfg)
         -h|--help: shows this help
         """.format(sys.argv[0]))
-        # --log-socket-host HOST: send logs to this host")
-        # --log-socket-port PORT: send logs using this port (default: 9022)")
+    # --log-socket-host HOST: send logs to this host")
+    # --log-socket-port PORT: send logs using this port (default: 9022)")
 
 
 if __name__ == '__main__':

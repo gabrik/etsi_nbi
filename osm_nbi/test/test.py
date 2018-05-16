@@ -4,16 +4,12 @@
 import getopt
 import sys
 import requests
-#import base64
-#from os.path import getsize, basename
-#from hashlib import md5
 import json
 import logging
 import yaml
-#import json
+# import json
 import tarfile
 from os import makedirs
-from copy import deepcopy
 
 __author__ = "Alfonso Tierno, alfonso.tiernosepulveda@telefonica.com"
 __date__ = "$2018-03-01$"
@@ -61,9 +57,12 @@ test_not_authorized_list = (
 
 # test ones authorized
 test_authorized_list = (
-    ("AU1", "Invalid vnfd id", "GET", "/vnfpkgm/v1/vnf_packages/non-existing-id", headers_json, None, 404, r_header_json, "json"),
-    ("AU2","Invalid nsd id", "GET", "/nsd/v1/ns_descriptors/non-existing-id", headers_yaml, None, 404, r_header_yaml, "yaml"),
-    ("AU3","Invalid nsd id", "DELETE", "/nsd/v1/ns_descriptors_content/non-existing-id", headers_yaml, None, 404, r_header_yaml, "yaml"),
+    ("AU1", "Invalid vnfd id", "GET", "/vnfpkgm/v1/vnf_packages/non-existing-id",
+     headers_json, None, 404, r_header_json, "json"),
+    ("AU2", "Invalid nsd id", "GET", "/nsd/v1/ns_descriptors/non-existing-id",
+     headers_yaml, None, 404, r_header_yaml, "yaml"),
+    ("AU3", "Invalid nsd id", "DELETE", "/nsd/v1/ns_descriptors_content/non-existing-id",
+     headers_yaml, None, 404, r_header_yaml, "yaml"),
 )
 
 vim = {
@@ -83,13 +82,15 @@ vim_bad = vim.copy()
 vim_bad.pop("name")
 
 test_admin_list1 = (
-    ("VIM1", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, vim, (201, 204), {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json"),
+    ("VIM1", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, vim, (201, 204),
+     {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json"),
     ("VIM2", "Create VIM bad schema", "POST", "/admin/v1/vim_accounts", headers_json, vim_bad, 422, None, headers_json),
     ("VIM2", "Create VIM name repeated", "POST", "/admin/v1/vim_accounts", headers_json, vim, 409, None, headers_json),
     ("VIM4", "Show VIMs", "GET", "/admin/v1/vim_accounts", headers_yaml, None, 200, r_header_yaml, "yaml"),
     ("VIM5", "Show VIM", "GET", "/admin/v1/vim_accounts/{VIM1}", headers_yaml, None, 200, r_header_yaml, "yaml"),
     ("VIM6", "Delete VIM", "DELETE", "/admin/v1/vim_accounts/{VIM1}", headers_yaml, None, 202, None, 0),
 )
+
 
 class TestException(Exception):
     pass
@@ -108,7 +109,8 @@ class TestRest:
     def set_header(self, header):
         self.s.headers.update(header)
 
-    def test(self, name, description, method, url, headers, payload, expected_codes, expected_headers, expected_payload):
+    def test(self, name, description, method, url, headers, payload, expected_codes, expected_headers,
+             expected_payload):
         """
         Performs an http request and check http code response. Exit if different than allowed. It get the returned id
         that can be used by following test in the URL with {name} where name is the name of the test
@@ -154,7 +156,7 @@ class TestRest:
                             payload = f.read()
                 elif isinstance(payload, dict):
                     payload = json.dumps(payload)
-    
+
             test = "Test {} {} {} {}".format(name, description, method, url)
             logger.warning(test)
             stream = False
@@ -205,7 +207,7 @@ class TestRest:
                 elif expected_payload == "text":
                     if len(r.content) == 0:
                         raise TestException("Expected some response payload, but got empty")
-                    #r.text
+                    # r.text
             location = r.headers.get("Location")
             if location:
                 _id = location[location.rfind("/") + 1:]
@@ -240,24 +242,24 @@ if __name__ == "__main__":
 
         for o, a in opts:
             if o == "--version":
-                print ("test version " + __version__ + ' ' + version_date)
+                print("test version " + __version__ + ' ' + version_date)
                 sys.exit()
             elif o in ("-v", "--verbose"):
                 verbose += 1
-            elif o in ("no-verbose"):
+            elif o == "no-verbose":
                 verbose = -1
             elif o in ("-h", "--help"):
                 usage()
                 sys.exit()
-            elif o in ("--url"):
+            elif o == "--url":
                 url = a
             elif o in ("-u", "--user"):
                 user = a
             elif o in ("-p", "--password"):
                 password = a
-            elif o in ("--project"):
+            elif o == "--project":
                 project = a
-            elif o in ("--insecure"):
+            elif o == "--insecure":
                 verify = False
             else:
                 assert False, "Unhandled option"
@@ -298,15 +300,18 @@ if __name__ == "__main__":
         # print(location, vnfd_id)
 
         # vnfd UPLOAD test
-        r = test_rest.test("VNFD2", "Onboard VNFD step 2 as TEXT", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        r = test_rest.test("VNFD2", "Onboard VNFD step 2 as TEXT", "PUT",
+                           "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
                            r_header_text, "@./cirros_vnf/cirros_vnfd.yaml", 204, None, 0)
 
         # vnfd SHOW OSM format
-        r = test_rest.test("VNFD3", "Show VNFD OSM format", "GET", "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
+        r = test_rest.test("VNFD3", "Show VNFD OSM format", "GET",
+                           "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
                            headers_json, None, 200, r_header_json, "json")
 
         # vnfd SHOW text
-        r = test_rest.test("VNFD4", "Show VNFD SOL005 text", "GET", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        r = test_rest.test("VNFD4", "Show VNFD SOL005 text", "GET",
+                           "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
                            headers_text, None, 200, r_header_text, "text")
 
         # vnfd UPLOAD ZIP
@@ -314,25 +319,31 @@ if __name__ == "__main__":
         tar = tarfile.open("temp/cirros_vnf.tar.gz", "w:gz")
         tar.add("cirros_vnf")
         tar.close()
-        r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT",
+                           "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
                            r_header_zip, "@b./temp/cirros_vnf.tar.gz", 204, None, 0)
 
         # vnfd SHOW OSM format
-        r = test_rest.test("VNFD6", "Show VNFD OSM format", "GET", "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
+        r = test_rest.test("VNFD6", "Show VNFD OSM format", "GET",
+                           "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
                            headers_json, None, 200, r_header_json, "json")
 
         # vnfd SHOW zip
-        r = test_rest.test("VNFD7", "Show VNFD SOL005 zip", "GET", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        r = test_rest.test("VNFD7", "Show VNFD SOL005 zip", "GET",
+                           "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
                            headers_zip, None, 200, r_header_zip, "zip")
         # vnfd SHOW descriptor
-        r = test_rest.test("VNFD8", "Show VNFD descriptor", "GET", "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(vnfd_id),
+        r = test_rest.test("VNFD8", "Show VNFD descriptor", "GET",
+                           "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(vnfd_id),
                            headers_text, None, 200, r_header_text, "text")
         # vnfd SHOW actifact
-        r = test_rest.test("VNFD9", "Show VNFD artifact", "GET", "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/cirros-64.png".format(vnfd_id),
+        r = test_rest.test("VNFD9", "Show VNFD artifact", "GET",
+                           "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/cirros-64.png".format(vnfd_id),
                            headers_text, None, 200, r_header_octect, "text")
 
         # # vnfd DELETE
-        # r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
+        # r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE",
+        # "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
         #                    headers_yaml, None, 204, None, 0)
 
         # nsd CREATE
@@ -343,14 +354,18 @@ if __name__ == "__main__":
         # print(location, nsd_id)
 
         # nsd UPLOAD test
-        r = test_rest.test("NSD2", "Onboard NSD with missing vnfd", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content?constituent-vnfd.0.vnfd-id-ref=NONEXISTING-VNFD".format(nsd_id),
+        r = test_rest.test("NSD2", "Onboard NSD with missing vnfd", "PUT",
+                           "/nsd/v1/ns_descriptors/{}/nsd_content?constituent-vnfd.0.vnfd-id-ref"
+                           "=NONEXISTING-VNFD".format(nsd_id),
                            r_header_text, "@./cirros_ns/cirros_nsd.yaml", 409, r_header_yaml, "yaml")
 
         # # VNF_CREATE
-        # r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
+        # r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT",
+        # "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
         #                    r_header_zip, "@b./temp/cirros_vnf.tar.gz", 204, None, 0)
 
-        r = test_rest.test("NSD2", "Onboard NSD step 2 as TEXT", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+        r = test_rest.test("NSD2", "Onboard NSD step 2 as TEXT", "PUT",
+                           "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
                            r_header_text, "@./cirros_ns/cirros_nsd.yaml", 204, None, 0)
 
         # nsd SHOW OSM format
@@ -358,7 +373,8 @@ if __name__ == "__main__":
                            headers_json, None, 200, r_header_json, "json")
 
         # nsd SHOW text
-        r = test_rest.test("NSD4", "Show NSD SOL005 text", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+        r = test_rest.test("NSD4", "Show NSD SOL005 text", "GET",
+                           "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
                            headers_text, None, 200, r_header_text, "text")
 
         # nsd UPLOAD ZIP
@@ -366,7 +382,8 @@ if __name__ == "__main__":
         tar = tarfile.open("temp/cirros_ns.tar.gz", "w:gz")
         tar.add("cirros_ns")
         tar.close()
-        r = test_rest.test("NSD5", "Onboard NSD step 3 replace with ZIP", "PUT", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
+        r = test_rest.test("NSD5", "Onboard NSD step 3 replace with ZIP", "PUT",
+                           "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
                            r_header_zip, "@b./temp/cirros_ns.tar.gz", 204, None, 0)
 
         # nsd SHOW OSM format
@@ -381,7 +398,8 @@ if __name__ == "__main__":
         r = test_rest.test("NSD8", "Show NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}/nsd".format(nsd_id),
                            headers_text, None, 200, r_header_text, "text")
         # nsd SHOW actifact
-        r = test_rest.test("NSD9", "Show NSD artifact", "GET", "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm_2x.png".format(nsd_id),
+        r = test_rest.test("NSD9", "Show NSD artifact", "GET",
+                           "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm_2x.png".format(nsd_id),
                            headers_text, None, 200, r_header_octect, "text")
 
         # vnfd DELETE
@@ -395,7 +413,6 @@ if __name__ == "__main__":
         # vnfd DELETE
         r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
                            headers_yaml, None, 204, None, 0)
-
 
         print("PASS")
 

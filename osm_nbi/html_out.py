@@ -17,7 +17,8 @@ html_start = """
 <body>
   <div id="osm_topmenu">
     <div>
-      <a href="https://osm.etsi.org"> <img src="/osm/static/OSM-logo.png" height="42" width="100" style="vertical-align:middle"> </a>
+      <a href="https://osm.etsi.org"> <img src="/osm/static/OSM-logo.png" height="42" width="100"
+        style="vertical-align:middle"> </a>
       <a>( {} )</a>
       <a href="/osm/vnfpkgm/v1/vnf_packages_content">VNFDs </a>
       <a href="/osm/nsd/v1/ns_descriptors_content">NSDs </a>
@@ -37,11 +38,10 @@ html_body = """
 
 html_end = """
 </body>
-</html> 
+</html>
 """
 
 html_body_error = "<h2> Error <pre>{}</pre> </h2>"
-
 
 
 html_auth2 = """
@@ -133,7 +133,8 @@ def format(data, request, response, session):
         if "Location" in response.headers:
             body += '<a href="{}"> show </a>'.format(response.headers["Location"])
         else:
-            body += '<a href="/osm/{}?METHOD=DELETE"> <img src="/osm/static/delete.png" height="25" width="25"> </a>'.format(request.path_info)
+            body += '<a href="/osm/{}?METHOD=DELETE"> <img src="/osm/static/delete.png" height="25" width="25"> </a>'\
+                .format(request.path_info)
             if request.path_info.startswith("/nslcm/v1/ns_instances_content/") or \
                     request.path_info.startswith("/nslcm/v1/ns_instances/"):
                 _id = request.path_info[request.path_info.rfind("/")+1:]
@@ -151,8 +152,6 @@ def format(data, request, response, session):
         if session.get("project_id"):
             user_text += ", project: {}".format(session.get("project_id"))
     return html_start.format(user_text) + body + html_end
-    #yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False)
+    # yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False)
     # tags=False,
     # encoding='utf-8', allow_unicode=True)
-
-

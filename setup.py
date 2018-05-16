@@ -44,4 +44,3 @@ setup(
     #     osm=osm_nbi.nbi:nbi
     #     ''',
 )
-

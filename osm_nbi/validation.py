@@ -18,7 +18,8 @@ name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^
 xml_text_schema = {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^']+$"}
 description_schema = {"type": ["string", "null"], "maxLength": 255, "pattern": "^[^'\"]+$"}
 id_schema_fake = {"type": "string", "minLength": 2,
-                  "maxLength": 36}  # "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
+                  "maxLength": 36}
+# "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
 pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\.[0-9a-fA-F]$"}
 http_schema = {"type": "string", "pattern": "^https?://[^'\"=]+$"}
@@ -35,7 +36,8 @@ mac_schema = {"type": "string",
 ip_schema = {"type": "string",
              "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"}
 ip_prefix_schema = {"type": "string",
-                    "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(30|[12]?[0-9])$"}
+                    "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+                               "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(30|[12]?[0-9])$"}
 port_schema = {"type": "integer", "minimum": 1, "maximum": 65534}
 object_schema = {"type": "object"}
 schema_version_2 = {"type": "integer", "minimum": 2, "maximum": 2}
