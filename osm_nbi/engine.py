@@ -368,6 +368,12 @@ class Engine(object):
                     indata["_admin"]["projects_read"] = [session["project_id"]]
                 if not indata["_admin"].get("projects_write"):
                     indata["_admin"]["projects_write"] = [session["project_id"]]
+                if item == "nsds":
+                    # transform constituent-vnfd:member-vnf-index to string
+                    if indata.get("constituent-vnfd"):
+                        for constituent_vnfd in indata["constituent-vnfd"]:
+                            if "member-vnf-index" in constituent_vnfd:
+                                constituent_vnfd["member-vnf-index"] = str(constituent_vnfd["member-vnf-index"])
             if item in ("vnfds", "nsds"):
                 indata["_admin"]["onboardingState"] = "CREATED"
                 indata["_admin"]["operationalState"] = "DISABLED"

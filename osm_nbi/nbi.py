@@ -158,13 +158,13 @@ class Server(object):
                                  "<ID>": {"METHODS": ("GET", "DELETE")}
                                  },
                     "vims": {"METHODS": ("GET", "POST"),
-                             "<ID>": {"METHODS": ("GET", "DELETE")}
+                             "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                              },
                     "vim_accounts": {"METHODS": ("GET", "POST"),
-                                     "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
+                                     "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                                      },
                     "sdns": {"METHODS": ("GET", "POST"),
-                             "<ID>": {"METHODS": ("GET", "DELETE", "PATCH")}
+                             "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                              },
                 }
             },
@@ -726,11 +726,11 @@ class Server(object):
                 if engine_item in ("vim_accounts", "sdns"):
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
 
-            elif method == "PUT":
+            elif method in ("PUT", "PATCH"):
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
-                if item2 in ("nsd_content", "package_content"):
+                if item2 in ("nsd_content", "package_content") and method == "PUT":
                     completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
                                                            cherrypy.request.headers)
                     if not completed:
@@ -739,11 +739,6 @@ class Server(object):
                     outdata = None
                 else:
                     outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)}
-            elif method == "PATCH":
-                if not indata and not kwargs:
-                    raise NbiException("Nothing to update. Provide payload and/or query string",
-                                       HTTPStatus.BAD_REQUEST)
-                outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)}
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
