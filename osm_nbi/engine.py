@@ -310,8 +310,14 @@ class Engine(object):
             if self.db.get_one(item, filter, fail_on_empty=False):
                 raise EngineException("{} with id '{}' already exists for this tenant".format(item[:-1], indata["id"]),
                                       HTTPStatus.CONFLICT)
+            # TODO validate with pyangbind. Load and dumps to convert data types
+            if item == "nsds":
+                # transform constituent-vnfd:member-vnf-index to string
+                if indata.get("constituent-vnfd"):
+                    for constituent_vnfd in indata["constituent-vnfd"]:
+                        if "member-vnf-index" in constituent_vnfd:
+                            constituent_vnfd["member-vnf-index"] = str(constituent_vnfd["member-vnf-index"])
 
-            # TODO validate with pyangbind
             if item == "nsds" and not force:
                 self._check_descriptor_dependencies(session, "nsds", indata)
         elif item == "userDefinedData":
@@ -368,12 +374,6 @@ class Engine(object):
                     indata["_admin"]["projects_read"] = [session["project_id"]]
                 if not indata["_admin"].get("projects_write"):
                     indata["_admin"]["projects_write"] = [session["project_id"]]
-                if item == "nsds":
-                    # transform constituent-vnfd:member-vnf-index to string
-                    if indata.get("constituent-vnfd"):
-                        for constituent_vnfd in indata["constituent-vnfd"]:
-                            if "member-vnf-index" in constituent_vnfd:
-                                constituent_vnfd["member-vnf-index"] = str(constituent_vnfd["member-vnf-index"])
             if item in ("vnfds", "nsds"):
                 indata["_admin"]["onboardingState"] = "CREATED"
                 indata["_admin"]["operationalState"] = "DISABLED"
@@ -934,12 +934,13 @@ class Engine(object):
         self._add_delete_filter(session, item, filter)
         if item in ("vnfds", "nsds") and not force:
             descriptor = self.get_item(session, item, _id)
-            descriptor_id = descriptor["id"]
-            self._check_dependencies_on_descriptor(session, item, descriptor_id)
+            descriptor_id = descriptor.get("id")
+            if descriptor_id:
+                self._check_dependencies_on_descriptor(session, item, descriptor_id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
-            if nsr["_admin"]["nsState"] == "INSTANTIATED" and not force:
+            if nsr["_admin"].get("nsState") == "INSTANTIATED" and not force:
                 raise EngineException("nsr '{}' cannot be deleted because it is in 'INSTANTIATED' state. "
                                       "Launch 'terminate' operation first; or force deletion".format(_id),
                                       http_code=HTTPStatus.CONFLICT)
