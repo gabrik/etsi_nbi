@@ -257,7 +257,7 @@ class Server(object):
                     try:
                         user_passwd = standard_b64decode(user_passwd64).decode()
                         user, _, passwd = user_passwd.partition(":")
-                    except:
+                    except Exception:
                         pass
                     outdata = self.engine.new_token(None, {"username": user, "password": passwd})
                     token = outdata["id"]
@@ -323,15 +323,15 @@ class Server(object):
                     elif format_yaml:
                         try:
                             kwargs[k] = yaml.load(v)
-                        except:
+                        except Exception:
                             pass
                     elif k.endswith(".gt") or k.endswith(".lt") or k.endswith(".gte") or k.endswith(".lte"):
                         try:
                             kwargs[k] = int(v)
-                        except:
+                        except Exception:
                             try:
                                 kwargs[k] = float(v)
-                            except:
+                            except Exception:
                                 pass
                     elif v.find(",") > 0:
                         kwargs[k] = v.split(",")
@@ -342,7 +342,7 @@ class Server(object):
                         elif format_yaml:
                             try:
                                 v[index] = yaml.load(v[index])
-                            except:
+                            except Exception:
                                 pass
 
             return indata
@@ -449,7 +449,7 @@ class Server(object):
             elif method == "POST":
                 try:
                     session = self._authorization()
-                except:
+                except Exception:
                     session = None
                 if kwargs:
                     indata.update(kwargs)
@@ -488,7 +488,7 @@ class Server(object):
         thread_info = None
         if args and args[0] == "help":
             return "<html><pre>\ninit\nfile/<name>  download file\ndb-clear/table\nprune\nlogin\nlogin2\n"\
-                    "sleep/<time>\nmessage/topic\n</pre></html>"
+                   "sleep/<time>\nmessage/topic\n</pre></html>"
 
         elif args and args[0] == "init":
             try:
@@ -787,7 +787,7 @@ def _start_service():
     for k, v in environ.items():
         if not k.startswith("OSMNBI_"):
             continue
-        k1, _,  k2 = k[7:].lower().partition("_")
+        k1, _, k2 = k[7:].lower().partition("_")
         if not k2:
             continue
         try:

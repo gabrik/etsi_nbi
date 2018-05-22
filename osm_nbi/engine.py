@@ -857,8 +857,8 @@ class Engine(object):
                 return folder_content, "text/plain"
                 # TODO manage folders in http
             else:
-                return self.fs.file_open((storage['folder'], storage['pkg-dir'], *path), "rb"), \
-                       "application/octet-stream"
+                return self.fs.file_open((storage['folder'], storage['pkg-dir'], *path), "rb"),\
+                    "application/octet-stream"
 
         # pkgtype   accept  ZIP  TEXT    -> result
         # manyfiles         yes  X       -> zip
