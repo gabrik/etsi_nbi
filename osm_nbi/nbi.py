@@ -59,7 +59,7 @@ URL: /osm                                                       GET     POST    
             /ns_instances_content                               O       O
                 /<nsInstanceId>                                 O                       O
             /ns_instances                                       5       5
-                /<nsInstanceId>                                 5                       5
+                /<nsInstanceId>                                 O5                      O5
                     instantiate                                         O5
                     terminate                                           O5
                     action                                              O
@@ -215,7 +215,7 @@ class Server(object):
                                              "<ID>": {"METHODS": ("GET", "DELETE")}
                                              },
                     "ns_instances": {"METHODS": ("GET", "POST"),
-                                     "<ID>": {"TODO": ("GET", "DELETE"),
+                                     "<ID>": {"METHODS": ("GET", "DELETE"),
                                               "scale": {"TODO": "POST"},
                                               "terminate": {"METHODS": "POST"},
                                               "instantiate": {"METHODS": "POST"},

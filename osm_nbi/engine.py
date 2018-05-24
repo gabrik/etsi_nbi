@@ -949,10 +949,8 @@ class Engine(object):
             self.db.del_list("vnfrs", {"nsr-id-ref": _id})
             self.msg.write("ns", "deleted", {"_id": _id})
             return v
-        if item in ("vim_accounts", "sdns"):
-            desc = self.db.get_one(item, filter)
-            desc["_admin"]["to_delete"] = True
-            self.db.replace(item, _id, desc)   # TODO change to set_one
+        if item in ("vim_accounts", "sdns") and not force:
+            self.db.set_one(item, {"_id": _id}, {"_admin.to_delete": True})   # TODO change status
             if item == "vim_accounts":
                 self.msg.write("vim_account", "delete", {"_id": _id})
             elif item == "sdns":
@@ -960,7 +958,10 @@ class Engine(object):
             return {"deleted": 1}  # TODO indicate an offline operation to return 202 ACCEPTED
 
         v = self.db.del_one(item, filter)
-        self.fs.file_delete(_id, ignore_non_exist=True)
+        if item in ("vnfds", "nsds"):
+            self.fs.file_delete(_id, ignore_non_exist=True)
+        if item in ("vim_accounts", "sdns", "vnfds", "nsds"):
+            self.msg.write(item[:-1], "deleted", {"_id": _id})
         return v
 
     def prune(self):
