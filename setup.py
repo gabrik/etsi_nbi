@@ -15,8 +15,8 @@ setup(
     name=_name,
     description='OSM North Bound Interface',
     long_description=README,
-    # version_command=('git describe --tags --long --dirty', 'pep440-git'),
-    version=VERSION,
+    version_command=('git describe --tags --long --dirty', 'pep440-git'),
+    # version=VERSION,
     # python_requires='>3.5.0',
     author='ETSI OSM',
     author_email='alfonso.tiernosepulveda@telefonica.com',
@@ -37,7 +37,7 @@ setup(
         'CherryPy', 'pymongo', 'jsonschema', 'PyYAML',
         # 'osm-common',
     ],
-    # setup_requires=['setuptools-version-command'],
+    setup_requires=['setuptools-version-command'],
     # test_suite='nose.collector',
     # entry_points='''
     #     [console_scripts]
