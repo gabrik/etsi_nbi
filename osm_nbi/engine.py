@@ -603,7 +603,7 @@ class Engine(object):
                     "created-time": now,
                     # "vnfd": vnfd,        # at OSM model.but removed to avoid data duplication TODO: revise
                     "vnfd-ref": vnfd_id,
-                    "vnfd-id": vnfr_id,    # not at OSM model, but useful
+                    "vnfd-id": vnfd["_id"],    # not at OSM model, but useful
                     "vim-account-id": None,
                     "vdur": [],
                     "connection-point": [],

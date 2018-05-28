@@ -716,7 +716,7 @@ class Server(object):
                     outdata = self.engine.del_item_list(session, engine_item, kwargs)
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
-                    if item == "ns_instances_content":
+                    if item == "ns_instances_content" and not force:
                         opp_id = self.engine.ns_operation(session, _id, "terminate", {"autoremove": True}, None)
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
