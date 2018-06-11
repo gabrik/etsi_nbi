@@ -342,16 +342,22 @@ class Engine(object):
         :param indata: descriptor with the parameters of the operation
         :return: None
         """
+        def check_valid_vnf_member_index(member_vnf_index):
+            for vnf in nsr["nsd"]["constituent-vnfd"]:
+                if member_vnf_index == vnf["member-vnf-index"]:
+                    break
+            else:
+                raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the "
+                                      "nsd:constituent-vnfd".format(member_vnf_index))
+
         if operation == "action":
             if indata.get("vnf_member_index"):
                 indata["member_vnf_index"] = indata.pop("vnf_member_index")    # for backward compatibility
-            for vnf in nsr["nsd"]["constituent-vnfd"]:
-                if indata["member_vnf_index"] == vnf["member-vnf-index"]:
-                    # TODO get vnfd, check primitives
-                    break
-            else:
-                raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the nsd "
-                                      "constituent-vnfd".format(indata["member_vnf_index"]))
+            check_valid_vnf_member_index(indata["member_vnf_index"])
+            # TODO get vnfd, check primitives
+        if operation == "scale":
+            check_valid_vnf_member_index(indata["scaleVnfData"]["scaleByStepData"]["member-vnf-index"])
+            # TODO check vnf scaling primitives
 
     def _format_new_data(self, session, item, indata):
         now = time()
@@ -624,9 +630,11 @@ class Engine(object):
                     vdur = {
                         "id": vdur_id,
                         "vdu-id-ref": vdu["id"],
+                        # TODO      "name": ""     Name of the VDU in the VIM
                         "ip-address": None,  # mgmt-interface filled by LCM
                         # "vim-id", "flavor-id", "image-id", "management-ip" # filled by LCM
                         "internal-connection-point": [],
+                        "interfaces": [],
                     }
                     # TODO volumes: name, volume-id
                     for icp in vdu.get("internal-connection-point", ()):
@@ -638,6 +646,13 @@ class Engine(object):
                             # vim-id  # TODO it would be nice having a vim port id
                         }
                         vdur["internal-connection-point"].append(vdu_icp)
+                    for iface in vdu.get("interface", ()):
+                        vdu_iface = {
+                            "name": iface.get("name"),
+                            # "ip-address", "mac-address" # filled by LCM
+                            # vim-id  # TODO it would be nice having a vim port id
+                        }
+                        vdur["interfaces"].append(vdu_iface)
                     vnfr_descriptor["vdur"].append(vdur)
 
                 step = "creating vnfr vnfd-id='{}' constituent-vnfd='{}' at database".format(

@@ -68,8 +68,8 @@ URL: /osm                                                       GET     POST    
             /ns_lcm_op_occs                                     5       5
                 /<nsLcmOpOccId>                                 5                       5       5
                     TO BE COMPLETED                             5               5
-            /vnfrs                                              O
-                /<vnfrId>                                       O
+            /vnf_instances  (also vnfrs for compatibility)      O
+                /<vnfInstanceId>                                O
             /subscriptions                                      5       5
                 /<subscriptionId>                               5                       X
         /admin/v1
@@ -216,7 +216,7 @@ class Server(object):
                                              },
                     "ns_instances": {"METHODS": ("GET", "POST"),
                                      "<ID>": {"METHODS": ("GET", "DELETE"),
-                                              "scale": {"TODO": "POST"},
+                                              "scale": {"METHODS": "POST"},
                                               "terminate": {"METHODS": "POST"},
                                               "instantiate": {"METHODS": "POST"},
                                               "action": {"METHODS": "POST"},
@@ -228,6 +228,9 @@ class Server(object):
                     "vnfrs": {"METHODS": ("GET"),
                               "<ID>": {"METHODS": ("GET")}
                               },
+                    "vnf_instances": {"METHODS": ("GET"),
+                                      "<ID>": {"METHODS": ("GET")}
+                                      },
                 }
             },
         }
@@ -657,7 +660,7 @@ class Server(object):
                 engine_item = "nsrs"
                 if item == "ns_lcm_op_occs":
                     engine_item = "nslcmops"
-                if item == "vnfrs":
+                if item == "vnfrs" or item == "vnf_instances":
                     engine_item = "vnfrs"
             if engine_item == "vims":   # TODO this is for backward compatibility, it will remove in the future
                 engine_item = "vim_accounts"

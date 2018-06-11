@@ -22,6 +22,7 @@ id_schema_fake = {"type": "string", "minLength": 2,
                   "maxLength": 36}
 # "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
+time_schema = {"type": "string", "pattern": "^[0-9]{4}-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]([0-5]:){2}"}
 pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\.[0-9a-fA-F]$"}
 http_schema = {"type": "string", "pattern": "^https?://[^'\"=]+$"}
 bandwidth_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]bps)?$"}
@@ -88,7 +89,7 @@ ns_instantiate = {
 }
 
 ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive execution
-    "title": "ns action update input schema",
+    "title": "ns action input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
@@ -98,6 +99,36 @@ ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive
         "primitive_params": {"type": "object"},
     },
     "required": ["primitive", "primitive_params"],   # TODO add member_vnf_index
+    "additionalProperties": False
+}
+ns_scale = {   # TODO for the moment it is only VDU-scaling
+    "title": "ns scale input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "scaleType": {"enum": ["SCALE_VNF"]},
+        "scaleVnfData": {
+            "type": "object",
+            "properties": {
+                "vnfInstanceId": name_schema,
+                "scaleVnfType": {"enum": ["SCALE_OUT", 'SCALE_IN']},
+                "scaleByStepData": {
+                    "type": "object",
+                    "properties": {
+                        "scaling-group-descriptor": name_schema,
+                        "member-vnf-index": name_schema,
+                        "scaling-policy": name_schema,
+                    },
+                    "required": ["scaling-group-descriptor", "member-vnf-index"],
+                    "additionalProperties": False
+                },
+            },
+            "required": ["scaleVnfType", "scaleByStepData"],  # vnfInstanceId
+            "additionalProperties": False
+        },
+        "scaleTime": time_schema,
+    },
+    "required": ["scaleType", "scaleVnfData"],
     "additionalProperties": False
 }
 
@@ -219,6 +250,7 @@ nbi_new_input_schemas = {
     "sdns": sdn_new_schema,
     "ns_instantiate": ns_instantiate,
     "ns_action": ns_action,
+    "ns_scale": ns_scale
 }
 
 nbi_edit_input_schemas = {
