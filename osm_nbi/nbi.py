@@ -196,7 +196,7 @@ class Server(object):
                                              "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
                                              },
                     "vnf_packages": {"METHODS": ("GET", "POST"),
-                                     "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",  # GET: vnfPkgInfo
+                                     "<ID>": {"METHODS": ("GET", "DELETE", "PATCH"),  # GET: vnfPkgInfo
                                               "package_content": {"METHODS": ("GET", "PUT"),         # package
                                                                   "upload_from_uri": {"TODO": "POST"}
                                                                   },
