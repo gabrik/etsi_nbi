@@ -530,14 +530,14 @@ class Engine(object):
             if file_pkg:
                 file_pkg.close()
 
-    def new_nsr(self, session, ns_request):
+    def new_nsr(self, rollback, session, ns_request):
         """
         Creates a new nsr into database. It also creates needed vnfrs
+        :param rollback: list where this method appends created items at database in case a rollback may to be done
         :param session: contains the used login username and working project
         :param ns_request: params to be used for the nsr
         :return: the _id of nsr descriptor stored at database
         """
-        rollback = []
         step = ""
         try:
             # look for nsr
@@ -643,20 +643,16 @@ class Engine(object):
                     member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
                 self._format_new_data(session, "vnfrs", vnfr_descriptor)
                 self.db.create("vnfrs", vnfr_descriptor)
-                rollback.append({"session": session, "item": "vnfrs", "_id": vnfr_id, "force": True})
+                rollback.insert(0, {"item": "vnfrs", "_id": vnfr_id})
                 nsr_descriptor["constituent-vnfr-ref"].append(vnfr_id)
 
             step = "creating nsr at database"
             self._format_new_data(session, "nsrs", nsr_descriptor)
             self.db.create("nsrs", nsr_descriptor)
+            rollback.insert(0, {"item": "nsrs", "_id": nsr_id})
             return nsr_id
         except Exception as e:
             raise EngineException("Error {}: {}".format(step, e))
-            for rollback_item in rollback:
-                try:
-                    self.engine.del_item(**rollback)
-                except Exception as e2:
-                    self.logger.error("Rollback Exception {}: {}".format(rollback, e2))
 
     @staticmethod
     def _update_descriptor(desc, kwargs):
@@ -694,10 +690,11 @@ class Engine(object):
             raise EngineException(
                 "Invalid query string '{}'. Index '{}' out of  range".format(k, kitem_old))
 
-    def new_item(self, session, item, indata={}, kwargs=None, headers={}, force=False):
+    def new_item(self, rollback, session, item, indata={}, kwargs=None, headers={}, force=False):
         """
         Creates a new entry into database. For nsds and vnfds it creates an almost empty DISABLED  entry,
         that must be completed with a call to method upload_content
+        :param rollback: list where this method appends created items at database in case a rollback may to be done
         :param session: contains the used login username and working project
         :param item: it can be: users, projects, vim_accounts, sdns, nsrs, nsds, vnfds
         :param indata: data to be inserted
@@ -722,13 +719,14 @@ class Engine(object):
 
             if item == "nsrs":
                 # in this case the input descriptor is not the data to be stored
-                return self.new_nsr(session, ns_request=content)
+                return self.new_nsr(rollback, session, ns_request=content)
 
             self._validate_new_data(session, item_envelop, content, force)
             if item in ("nsds", "vnfds"):
                 content = {"_admin": {"userDefinedData": content}}
             self._format_new_data(session, item, content)
             _id = self.db.create(item, content)
+            rollback.insert(0, {"item": item, "_id": _id})
 
             if item == "vim_accounts":
                 msg_data = self.db.get_one(item, {"_id": _id})
@@ -763,9 +761,10 @@ class Engine(object):
         }
         return nslcmop
 
-    def ns_operation(self, session, nsInstanceId, operation, indata, kwargs=None):
+    def ns_operation(self, rollback, session, nsInstanceId, operation, indata, kwargs=None):
         """
         Performs a new operation over a ns
+        :param rollback: list where this method appends created items at database in case a rollback may to be done
         :param session: contains the used login username and working project
         :param nsInstanceId: _id of the nsr to perform the operation
         :param operation: it can be: instantiate, terminate, action, TODO: update, heal
@@ -795,6 +794,7 @@ class Engine(object):
             nslcmop = self.new_nslcmop(session, nsInstanceId, operation, indata)
             self._format_new_data(session, "nslcmops", nslcmop)
             _id = self.db.create("nslcmops", nslcmop)
+            rollback.insert(0, {"item": "nslcmops", "_id": _id})
             indata["_id"] = _id
             self.msg.write("ns", operation, nslcmop)
             return _id

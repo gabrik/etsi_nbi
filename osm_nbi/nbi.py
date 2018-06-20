@@ -616,7 +616,8 @@ class Server(object):
         _format = None
         method = "DONE"
         engine_item = None
-        rollback = None
+        rollback = []
+        session = None
         try:
             if not topic or not version or not item:
                 raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -682,9 +683,8 @@ class Server(object):
                 if item in ("ns_descriptors_content", "vnf_packages_content"):
                     _id = cherrypy.request.headers.get("Transaction-Id")
                     if not _id:
-                        _id = self.engine.new_item(session, engine_item, {}, None, cherrypy.request.headers,
+                        _id = self.engine.new_item(rollback, session, engine_item, {}, None, cherrypy.request.headers,
                                                    force=force)
-                        rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
                     completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
                                                            cherrypy.request.headers)
                     if completed:
@@ -693,18 +693,17 @@ class Server(object):
                         cherrypy.response.headers["Transaction-Id"] = _id
                     outdata = {"id": _id}
                 elif item == "ns_instances_content":
-                    _id = self.engine.new_item(session, engine_item, indata, kwargs, force=force)
-                    rollback = {"session": session, "item": engine_item, "_id": _id, "force": True}
-                    self.engine.ns_operation(session, _id, "instantiate", {}, None)
+                    _id = self.engine.new_item(rollback, session, engine_item, indata, kwargs, force=force)
+                    self.engine.ns_operation(rollback, session, _id, "instantiate", {}, None)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
                 elif item == "ns_instances" and item2:
-                    _id = self.engine.ns_operation(session, _id, item2, indata, kwargs)
+                    _id = self.engine.ns_operation(rollback, session, _id, item2, indata, kwargs)
                     self._set_location_header(topic, version, "ns_lcm_op_occs", _id)
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 else:
-                    _id = self.engine.new_item(session, engine_item, indata, kwargs, cherrypy.request.headers,
+                    _id = self.engine.new_item(rollback, session, engine_item, indata, kwargs, cherrypy.request.headers,
                                                force=force)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
@@ -717,7 +716,8 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
                     if item == "ns_instances_content" and not force:
-                        opp_id = self.engine.ns_operation(session, _id, "terminate", {"autoremove": True}, None)
+                        opp_id = self.engine.ns_operation(rollback, session, _id, "terminate", {"autoremove": True},
+                                                          None)
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
@@ -747,11 +747,11 @@ class Server(object):
             cherrypy.response.status = e.http_code.value
             if hasattr(outdata, "close"):  # is an open file
                 outdata.close()
-            if rollback:
+            for rollback_item in rollback:
                 try:
-                    self.engine.del_item(**rollback)
+                    self.engine.del_item(**rollback_item, session=session, force=True)
                 except Exception as e2:
-                    cherrypy.log("Rollback Exception {}: {}".format(rollback, e2))
+                    cherrypy.log("Rollback Exception {}: {}".format(rollback_item, e2))
             error_text = str(e)
             if isinstance(e, MsgException):
                 error_text = "{} has been '{}' but other modules cannot be informed because an error on bus".format(
