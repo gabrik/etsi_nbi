@@ -15,6 +15,7 @@ patern_name = "^[ -~]+$"
 passwd_schema = {"type": "string", "minLength": 1, "maxLength": 60}
 nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()'\"]+$"}
 name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^,;()'\"]+$"}
+string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
 xml_text_schema = {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^']+$"}
 description_schema = {"type": ["string", "null"], "maxLength": 255, "pattern": "^[^'\"]+$"}
 id_schema_fake = {"type": "string", "minLength": 2,
@@ -51,7 +52,41 @@ ns_instantiate = {
     "title": "ns action instantiate input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
+    "properties": {
+        "nsName": name_schema,
+        "nsDescription": description_schema,
+        "nsdId": id_schema,
+        "vimAccountId": id_schema,
+        "ssh_keys": {"type": "string"},
+        "vnf": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "member-vnf-index": name_schema,
+                    "vimAccountId": id_schema,
+                },
+                "required": ["member-vnf-index"]
+            }
+        },
+        "vld": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": string_schema,
+                    "vim-network-name": {"OneOf": [string_schema, object_schema]},
+                    "ip-profile": object_schema,
+                },
+                "required": ["name"]
+            }
+        },
+    },
+    "required": ["nsName", "nsdId", "vimAccountId"]
 }
+
 ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive execution
     "title": "ns action update input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
@@ -214,7 +249,7 @@ def validate_input(indata, item, new=True):
         return None
     except js_e.ValidationError as e:
         if e.path:
-            error_pos = "at '" + ":".join(e.path) + "'"
+            error_pos = "at '" + ":".join(map(str, e.path)) + "'"
         else:
             error_pos = ""
         raise ValidationError("Format error {} '{}' ".format(error_pos, e))

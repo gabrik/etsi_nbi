@@ -694,7 +694,7 @@ class Server(object):
                     outdata = {"id": _id}
                 elif item == "ns_instances_content":
                     _id = self.engine.new_item(rollback, session, engine_item, indata, kwargs, force=force)
-                    self.engine.ns_operation(rollback, session, _id, "instantiate", {}, None)
+                    self.engine.ns_operation(rollback, session, _id, "instantiate", indata, None)
                     self._set_location_header(topic, version, item, _id)
                     outdata = {"id": _id}
                 elif item == "ns_instances" and item2:

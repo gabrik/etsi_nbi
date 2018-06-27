@@ -538,6 +538,7 @@ class Engine(object):
         :param ns_request: params to be used for the nsr
         :return: the _id of nsr descriptor stored at database
         """
+        rollback_index = len(rollback)
         step = ""
         try:
             # look for nsr
@@ -649,7 +650,7 @@ class Engine(object):
             step = "creating nsr at database"
             self._format_new_data(session, "nsrs", nsr_descriptor)
             self.db.create("nsrs", nsr_descriptor)
-            rollback.insert(0, {"item": "nsrs", "_id": nsr_id})
+            rollback.insert(rollback_index, {"item": "nsrs", "_id": nsr_id})
             return nsr_id
         except Exception as e:
             raise EngineException("Error {}: {}".format(step, e))
