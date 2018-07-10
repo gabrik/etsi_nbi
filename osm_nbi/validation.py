@@ -18,8 +18,9 @@ name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^
 string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
 xml_text_schema = {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^']+$"}
 description_schema = {"type": ["string", "null"], "maxLength": 255, "pattern": "^[^'\"]+$"}
-id_schema_fake = {"type": "string", "minLength": 2,
-                  "maxLength": 36}
+id_schema_fake = {"type": "string", "minLength": 2, "maxLength": 36}
+bool_schema = {"type": "boolean"}
+null_schema = {"type": "null"}
 # "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
 time_schema = {"type": "string", "pattern": "^[0-9]{4}-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]([0-5]:){2}"}
@@ -48,6 +49,122 @@ log_level_schema = {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERRO
 checksum_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}
 size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
 
+ns_instantiate_vdu = {
+    "title": "ns action instantiate input schema for vdu",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "id": name_schema,
+        "volume": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": name_schema,
+                    "vim-volume-id": name_schema,
+                },
+                "required": ["name", "vim-volume-id"],
+                "additionalProperties": False
+            }
+        },
+        "interface": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": name_schema,
+                    "ip-address": ip_schema,
+                    "mac-address": mac_schema,
+                    "floating-ip-required": bool_schema,
+                },
+                "required": ["name"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["id"],
+    "additionalProperties": False
+}
+
+ip_profile_dns_schema = {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "properties": {
+            "address": ip_schema,
+        },
+        "required": ["address"],
+        "additionalProperties": False
+    }
+}
+
+ip_profile_dhcp_schema = {
+    "type": "object",
+    "properties": {
+        "enabled": {"type": "boolean"},
+        "count": integer1_schema,
+        "start-address": ip_schema
+    },
+    "additionalProperties": False,
+}
+
+ip_profile_schema = {
+    "title": "ip profile validation schame",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "ip-version": {"enum": ["ipv4", "ipv6"]},
+        "subnet-address": ip_prefix_schema,
+        "gateway-address": ip_schema,
+        "dns-server": ip_profile_dns_schema,
+        "dhcp-params": ip_profile_dhcp_schema,
+    }
+}
+
+ip_profile_update_schema = {
+    "title": "ip profile validation schame",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "ip-version": {"enum": ["ipv4", "ipv6"]},
+        "subnet-address": {"oneOf": [null_schema, ip_prefix_schema]},
+        "gateway-address": {"oneOf": [null_schema, ip_schema]},
+        "dns-server": {"oneOf": [null_schema, ip_profile_dns_schema]},
+
+        "dhcp-params": {"oneOf": [null_schema, ip_profile_dhcp_schema]},
+    },
+    "additionalProperties": False
+}
+
+ns_instantiate_internal_vld = {
+    "title": "ns action instantiate input schema for vdu",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": name_schema,
+        "vim-network-name": name_schema,
+        "ip-profile": ip_profile_update_schema,
+        "internal-connection-point": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id-ref": name_schema,
+                    "ip-address": ip_schema,
+                },
+                "required": ["id-ref", "ip-address"],
+                "additionalProperties": False
+            },
+        }
+    },
+    "required": ["name"],
+    "minProperties": 2,
+    "additionalProperties": False
+}
 
 ns_instantiate = {
     "title": "ns action instantiate input schema",
@@ -55,10 +172,11 @@ ns_instantiate = {
     "type": "object",
     "properties": {
         "nsName": name_schema,
-        "nsDescription": description_schema,
+        "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
         "vimAccountId": id_schema,
         "ssh_keys": {"type": "string"},
+        "nsr_id": id_schema,
         "vnf": {
             "type": "array",
             "minItems": 1,
@@ -67,8 +185,20 @@ ns_instantiate = {
                 "properties": {
                     "member-vnf-index": name_schema,
                     "vimAccountId": id_schema,
+                    "vdu": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": ns_instantiate_vdu,
+                    },
+                    "internal-vld": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": ns_instantiate_internal_vld
+                    }
                 },
-                "required": ["member-vnf-index"]
+                "required": ["member-vnf-index"],
+                "minProperties": 2,
+                "additionalProperties": False
             }
         },
         "vld": {
@@ -81,11 +211,13 @@ ns_instantiate = {
                     "vim-network-name": {"OneOf": [string_schema, object_schema]},
                     "ip-profile": object_schema,
                 },
-                "required": ["name"]
+                "required": ["name"],
+                "additionalProperties": False
             }
         },
     },
-    "required": ["nsName", "nsdId", "vimAccountId"]
+    "required": ["nsName", "nsdId", "vimAccountId"],
+    "additionalProperties": False
 }
 
 ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive execution
@@ -284,4 +416,4 @@ def validate_input(indata, item, new=True):
             error_pos = "at '" + ":".join(map(str, e.path)) + "'"
         else:
             error_pos = ""
-        raise ValidationError("Format error {} '{}' ".format(error_pos, e))
+        raise ValidationError("Format error {} '{}' ".format(error_pos, e.message))

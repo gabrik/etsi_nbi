@@ -17,7 +17,7 @@ from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from time import time
-from copy import deepcopy
+from copy import deepcopy, copy
 from validation import validate_input, ValidationError
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
@@ -51,6 +51,17 @@ def _deep_update(dict_to_change, dict_reference):
         else:       # Dict->NotDict
             dict_to_change[k] = deepcopy(dict_reference[k])
             _deep_update(dict_to_change[k], dict_reference[k])
+
+
+def get_iterable(input):
+    """
+    Returns an iterable, in case input is None it just returns an empty tuple
+    :param input:
+    :return: iterable
+    """
+    if input is None:
+        return ()
+    return input
 
 
 class Engine(object):
@@ -342,22 +353,108 @@ class Engine(object):
         :param indata: descriptor with the parameters of the operation
         :return: None
         """
+        vnfds = {}
+        vim_accounts = []
+        nsd = nsr["nsd"]
+
         def check_valid_vnf_member_index(member_vnf_index):
-            for vnf in nsr["nsd"]["constituent-vnfd"]:
+            for vnf in nsd["constituent-vnfd"]:
                 if member_vnf_index == vnf["member-vnf-index"]:
-                    break
+                    vnfd_id = vnf["vnfd-id-ref"]
+                    if vnfd_id not in vnfds:
+                        vnfds[vnfd_id] = self.db.get_one("vnfds", {"id": vnfd_id})
+                    return vnfds[vnfd_id]
             else:
                 raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the "
                                       "nsd:constituent-vnfd".format(member_vnf_index))
 
+        def check_valid_vim_account(vim_account):
+            if vim_account in vim_accounts:
+                return
+            try:
+                self.db.get_one("vim_accounts", {"_id": vim_account})
+            except Exception:
+                raise EngineException("Invalid vimAccountId='{}' not present".format(vim_account))
+            vim_accounts.append(vim_account)
+
         if operation == "action":
+            # check vnf_member_index
             if indata.get("vnf_member_index"):
                 indata["member_vnf_index"] = indata.pop("vnf_member_index")    # for backward compatibility
-            check_valid_vnf_member_index(indata["member_vnf_index"])
-            # TODO get vnfd, check primitives
+            if not indata.get("member_vnf_index"):
+                raise EngineException("Missing 'member_vnf_index' parameter")
+            vnfd = check_valid_vnf_member_index(indata["member_vnf_index"])
+            # check primitive
+            for config_primitive in get_iterable(vnfd.get("vnf-configuration", {}).get("config-primitive")):
+                if indata["primitive"] == config_primitive["name"]:
+                    # check needed primitive_params are provided
+                    if indata.get("primitive_params"):
+                        in_primitive_params_copy = copy(indata["primitive_params"])
+                    else:
+                        in_primitive_params_copy = {}
+                    for paramd in get_iterable(config_primitive.get("parameter")):
+                        if paramd["name"] in in_primitive_params_copy:
+                            del in_primitive_params_copy[paramd["name"]]
+                        elif not paramd.get("default-value"):
+                            raise EngineException("Needed parameter {} not provided for primitive '{}'".format(
+                                paramd["name"], indata["primitive"]))
+                    # check no extra primitive params are provided
+                    if in_primitive_params_copy:
+                        raise EngineException("parameter/s '{}' not present at vnfd for primitive '{}'".format(
+                            list(in_primitive_params_copy.keys()), indata["primitive"]))
+                    break
+            else:
+                raise EngineException("Invalid primitive '{}' is not present at vnfd".format(indata["primitive"]))
         if operation == "scale":
-            check_valid_vnf_member_index(indata["scaleVnfData"]["scaleByStepData"]["member-vnf-index"])
-            # TODO check vnf scaling primitives
+            vnfd = check_valid_vnf_member_index(indata["scaleVnfData"]["scaleByStepData"]["member-vnf-index"])
+            for scaling_group in get_iterable(vnfd.get("scaling-group-descriptor")):
+                if indata["scaleVnfData"]["scaleByStepData"]["scaling-group-descriptor"] == scaling_group["name"]:
+                    break
+            else:
+                raise EngineException("Invalid scaleVnfData:scaleByStepData:scaling-group-descriptor '{}' is not "
+                                      "present at vnfd:scaling-group-descriptor".format(
+                                          indata["scaleVnfData"]["scaleByStepData"]["scaling-group-descriptor"]))
+        if operation == "instantiate":
+            # check vim_account
+            check_valid_vim_account(indata["vimAccountId"])
+            for in_vnf in get_iterable(indata.get("vnf")):
+                vnfd = check_valid_vnf_member_index(in_vnf["member-vnf-index"])
+                if in_vnf.get("vimAccountId"):
+                    check_valid_vim_account(in_vnf["vimAccountId"])
+                for in_vdu in get_iterable(in_vnf.get("vdu")):
+                    for vdud in get_iterable(vnfd.get("vdu")):
+                        if vdud["id"] == in_vdu["id"]:
+                            for volume in get_iterable(in_vdu.get("volume")):
+                                for volumed in get_iterable(vdud.get("volumes")):
+                                    if volumed["name"] == volume["name"]:
+                                        break
+                                else:
+                                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                          "volume:name='{}' is not present at vnfd:vdu:volumes list".
+                                                          format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                                 volume["name"]))
+                            break
+                    else:
+                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu:id='{}' is not "
+                                              "present at vnfd".format(in_vnf["member-vnf-index"], in_vdu["id"]))
+
+                for in_internal_vld in get_iterable(in_vnf.get("internal-vld")):
+                    for internal_vldd in get_iterable(vnfd.get("internal-vld")):
+                        if in_internal_vld["name"] == internal_vldd["name"] or \
+                                in_internal_vld["name"] == internal_vldd["id"]:
+                            break
+                    else:
+                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld:name='{}'"
+                                              " is not present at vnfd '{}'".format(in_vnf["member-vnf-index"],
+                                                                                    in_internal_vld["name"],
+                                                                                    vnfd["id"]))
+            for in_vld in get_iterable(indata.get("vld")):
+                for vldd in get_iterable(nsd.get("vld")):
+                    if in_vld["name"] == vldd["name"] or in_vld["name"] == vldd["id"]:
+                            break
+                    else:
+                        raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
+                            in_vld["name"]))
 
     def _format_new_data(self, session, item, indata):
         now = time()
