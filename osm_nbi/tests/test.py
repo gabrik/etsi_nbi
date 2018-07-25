@@ -704,10 +704,10 @@ class TestDeployIpMac(TestDeploy):
                         {
                             "id": "VM1",
                             "interface": [
-                                {
-                                    "name": "iface11",
-                                    "floating-ip-required": True,
-                                },
+                                # {
+                                #     "name": "iface11",
+                                #     "floating-ip-required": True,
+                                # },
                                 {
                                     "name": "iface13",
                                     "mac-address": "52:33:44:55:66:13"
