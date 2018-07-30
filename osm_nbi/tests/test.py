@@ -14,8 +14,8 @@ import os
 
 __author__ = "Alfonso Tierno, alfonso.tiernosepulveda@telefonica.com"
 __date__ = "$2018-03-01$"
-__version__ = "0.2"
-version_date = "Jul 2018"
+__version__ = "0.3"
+version_date = "Oct 2018"
 
 
 def usage():
@@ -572,14 +572,22 @@ class TestDeploy:
         self.vim_id = None
         self.nsd_test = None
         self.ns_test = None
+        self.ns_id = None
         self.vnfds_test = []
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
         self.uses_configuration = False
+        self.uss = {}
+        self.passwds = {}
+        self.cmds = {}
+        self.keys = {}
+        self.timeout = 120
+        self.passed_tests = 0
+        self.total_tests = 0
 
     def create_descriptors(self, engine):
-        temp_dir = os.path.dirname(__file__) + "/temp/"
+        temp_dir = os.path.dirname(os.path.abspath(__file__)) + "/temp/"
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
         for vnfd_filename in self.vnfd_filenames:
@@ -678,6 +686,7 @@ class TestDeploy:
                         headers_yaml, ns_data_text, 201,
                         {"Location": "nslcm/v1/ns_instances/", "Content-Type": "application/yaml"}, "yaml")
         self.ns_test = "DEPLOY{}".format(self.step)
+        self.ns_id = engine.test_ids[self.ns_test]
         engine.test_ids[self.ns_test]
         self.step += 1
         r = engine.test("DEPLOY{}".format(self.step), "Instantiate NS step 2", "POST",
@@ -753,8 +762,88 @@ class TestDeploy:
         if not isinstance(nslcmops, list) or nslcmops:
             raise TestException("NS {} deleted but with ns_lcm_op_occ active: {}".format(self.ns_test, nslcmops))
 
-    def test_ns(self, engine, test_osm):
-        pass
+    def test_ns(self, engine, test_osm, commands=None, users=None, passwds=None, keys=None, timeout=0):
+
+        n = 0
+        r = engine.test("TEST_NS{}".format(n), "GET VNFR_IDs", "GET",
+                        "/nslcm/v1/ns_instances/{}".format(self.ns_id), headers_json, None,
+                        200, r_header_json, "json")
+        n += 1
+        ns_data = r.json()
+
+        vnfr_list = ns_data['constituent-vnfr-ref']
+        time = 0
+
+        for vnfr_id in vnfr_list:
+            self.total_tests += 1
+            r = engine.test("TEST_NS{}".format(n), "GET IP_ADDRESS OF VNFR", "GET",
+                            "/nslcm/v1/vnfrs/{}".format(vnfr_id), headers_json, None,
+                            200, r_header_json, "json")
+            n += 1
+            vnfr_data = r.json()
+
+            if vnfr_data.get("ip-address"):
+                name = "TEST_NS{}".format(n)
+                description = "Run tests in VNFR with IP {}".format(vnfr_data['ip-address'])
+                n += 1
+                test_description = "Test {} {}".format(name, description)
+                logger.warning(test_description)
+                vnf_index = str(vnfr_data["member-vnf-index-ref"])
+                while timeout >= time:
+                    result, message = self.do_checks([vnfr_data["ip-address"]],
+                                                     vnf_index=vnfr_data["member-vnf-index-ref"],
+                                                     commands=commands.get(vnf_index), user=users.get(vnf_index),
+                                                     passwd=passwds.get(vnf_index), key=keys.get(vnf_index))
+                    if result == 1:
+                        logger.warning(message)
+                        break
+                    elif result == 0:
+                        time += 20
+                        sleep(20)
+                    elif result == -1:
+                        logger.critical(message)
+                        break
+                else:
+                    time -= 20
+                    logger.critical(message)
+            else:
+                logger.critical("VNFR {} has not mgmt address. Check failed".format(vnfr_id))
+
+    def do_checks(self, ip, vnf_index, commands=[], user=None, passwd=None, key=None):
+        try:
+            import urllib3
+            from pssh.clients import ParallelSSHClient
+            from pssh.utils import load_private_key
+            from ssh2 import exceptions as ssh2Exception
+        except ImportError as e:
+            logger.critical("package <pssh> or/and <urllib3> is not installed. Please add it with 'pip3 install "
+                            "parallel-ssh' and/or 'pip3 install urllib3': {}".format(e))
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        try:
+            p_host = os.environ.get("PROXY_HOST")
+            p_user = os.environ.get("PROXY_USER")
+            p_password = os.environ.get("PROXY_PASSWD")
+
+            if key:
+                pkey = load_private_key(key)
+            else:
+                pkey = None
+
+            client = ParallelSSHClient(ip, user=user, password=passwd, pkey=pkey, proxy_host=p_host,
+                                       proxy_user=p_user, proxy_password=p_password, timeout=10, num_retries=0)
+            for cmd in commands:
+                output = client.run_command(cmd)
+                client.join(output)
+                if output[ip[0]].exit_code:
+                    return -1, "    VNFR {} could not be checked: {}".format(ip[0], output[ip[0]].stderr)
+                else:
+                    self.passed_tests += 1
+                    return 1, "    Test successful"
+        except (ssh2Exception.ChannelFailure, ssh2Exception.SocketDisconnectError, ssh2Exception.SocketTimeout,
+                ssh2Exception.SocketRecvError) as e:
+            return 0, "Timeout accessing the VNFR {}: {}".format(ip[0], str(e))
+        except Exception as e:
+            return -1, "ERROR checking the VNFR {}: {}".format(ip[0], str(e))
 
     def aditional_operations(self, engine, test_osm, manual_check):
         pass
@@ -785,10 +874,16 @@ class TestDeploy:
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
         else:
-            self.test_ns(engine, test_osm)
+            self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
         self.aditional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
         self.delete_descriptors(engine)
+        self.print_results()
+
+    def print_results(self):
+        print("\n\n\n--------------------------------------------")
+        print("TEST RESULTS:\n PASSED TESTS: {} - TOTAL TESTS: {}".format(self.total_tests, self.passed_tests))
+        print("--------------------------------------------")
 
 
 class TestDeployHackfestCirros(TestDeploy):
@@ -798,9 +893,9 @@ class TestDeployHackfestCirros(TestDeploy):
         super().__init__()
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
-
-    def run(self, engine, test_osm, manual_check, test_params=None):
-        super().run(engine, test_osm, manual_check, test_params)
+        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.uss = {'1': "cirros", '2': "cirros"}
+        self.pss = {'1': "cubswin:)", '2': "cubswin:)"}
 
 
 class TestDeployIpMac(TestDeploy):
@@ -812,6 +907,10 @@ class TestDeployIpMac(TestDeploy):
         self.nsd_filename = "scenario_2vdu_set_ip_mac.yaml"
         self.descriptor_url = \
             "https://osm.etsi.org/gitweb/?p=osm/RO.git;a=blob_plain;f=test/RO_tests/v3_2vdu_set_ip_mac/"
+        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.uss = {'1': "osm", '2': "osm"}
+        self.pss = {'1': "osm4u", '2': "osm4u"}
+        self.timeout = 360
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         # super().run(engine, test_osm, manual_check, test_params)
@@ -860,7 +959,7 @@ class TestDeployIpMac(TestDeploy):
                             "interface": [
                                 {
                                     "name": "iface21",
-                                    "ip-address": "10.31.31.21",
+                                    "ip-address": "10.31.31.22",
                                     "mac-address": "52:33:44:55:66:21"
                                 },
                             ],
@@ -869,6 +968,7 @@ class TestDeployIpMac(TestDeploy):
                 },
             ]
         }
+
         super().run(engine, test_osm, manual_check, test_params={"ns-config": instantiation_params})
 
 
@@ -880,6 +980,9 @@ class TestDeployHackfest4(TestDeploy):
         self.vnfd_filenames = ("hackfest_4_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_4_nsd.tar.gz"
         self.uses_configuration = True
+        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.uss = {'1': "ubuntu", '2': "ubuntu"}
+        self.pss = {'1': "osm4u", '2': "osm4u"}
 
     def create_descriptors(self, engine):
         super().create_descriptors(engine)
@@ -920,9 +1023,6 @@ class TestDeployHackfest4(TestDeploy):
                     "/vnfpkgm/v1/vnf_packages/<{}>".format(self.vnfds_test[0]), headers_yaml, payload, 204, None, None)
         self.step += 1
 
-    def run(self, engine, test_osm, manual_check, test_params=None):
-        super().run(engine, test_osm, manual_check, test_params)
-
 
 class TestDeployHackfest3Charmed(TestDeploy):
     description = "Load and deploy Hackfest 3charmed_ns example. Modifies it for adding scaling and performs " \
@@ -933,6 +1033,9 @@ class TestDeployHackfest3Charmed(TestDeploy):
         self.vnfd_filenames = ("hackfest_3charmed_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_3charmed_nsd.tar.gz"
         self.uses_configuration = True
+        self.cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
+        self.uss = {'1': "ubuntu", '2': "ubuntu"}
+        self.pss = {'1': "osm4u", '2': "osm4u"}
 
     # def create_descriptors(self, engine):
     #     super().create_descriptors(engine)
@@ -991,7 +1094,11 @@ class TestDeployHackfest3Charmed(TestDeploy):
         if manual_check:
             input('NS service primitive has been executed. Check that file /home/ubuntu/OSMTESTNBI is present at '
                   'TODO_PUT_IP')
-        # TODO check automatic
+        else:
+            cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/OSMTESTNBI', ]}
+            uss = {'1': "ubuntu", '2': "ubuntu"}
+            pss = {'1': "osm4u", '2': "osm4u"}
+            self.test_ns(engine, test_osm, cmds, uss, pss, self.keys, self.timeout)
 
         # # 2 perform scale out
         # payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
@@ -1016,9 +1123,6 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # if manual_check:
         #     input('NS scale in done. Check that file /home/ubuntu/touched is updated and new VM is deleted')
         # # TODO check automatic
-
-    def run(self, engine, test_osm, manual_check, test_params=None):
-        super().run(engine, test_osm, manual_check, test_params)
 
 
 if __name__ == "__main__":
@@ -1051,6 +1155,7 @@ if __name__ == "__main__":
             "Deploy-Hackfest-3Charmed": TestDeployHackfest3Charmed,
             "Deploy-Hackfest-4": TestDeployHackfest4,
             "Deploy-CirrosMacIp": TestDeployIpMac,
+            # "Deploy-MultiVIM": TestDeployMultiVIM,
         }
         test_to_do = []
         test_params = {}
