@@ -34,7 +34,7 @@ setup(
         "git+https://osm.etsi.org/gerrit/osm/common.git@master#egg=osm-common-0.1.4"
     ],
     install_requires=[
-        'CherryPy', 'pymongo', 'jsonschema', 'PyYAML',
+        'CherryPy', 'pymongo', 'jsonschema', 'PyYAML', 'python-keystoneclient'
         # 'osm-common',
     ],
     setup_requires=['setuptools-version-command'],

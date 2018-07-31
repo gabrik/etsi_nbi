@@ -11,6 +11,7 @@ import logging.handlers
 import getopt
 import sys
 
+from authconn import AuthException
 from auth import Authenticator
 from engine import Engine, EngineException
 from osm_common.dbbase import DbException
@@ -26,6 +27,7 @@ __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.1.3"
 version_date = "Apr 2018"
 database_version = '1.0'
+auth_database_version = '1.0'
 
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
@@ -371,7 +373,7 @@ class Server(object):
 
             return self._format_out(outdata, session)
 
-        except EngineException as e:
+        except (EngineException, AuthException) as e:
             cherrypy.log("index Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             return self._format_out("Welcome to OSM!", session)
@@ -436,7 +438,7 @@ class Server(object):
             else:
                 raise NbiException("Method {} not allowed for token".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session)
-        except (NbiException, EngineException, DbException) as e:
+        except (NbiException, EngineException, DbException, AuthException) as e:
             cherrypy.log("tokens Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             problem_details = {
@@ -705,7 +707,7 @@ class Server(object):
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
-        except (NbiException, EngineException, DbException, FsException, MsgException) as e:
+        except (NbiException, EngineException, DbException, FsException, MsgException, AuthException) as e:
             cherrypy.log("Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             if hasattr(outdata, "close"):  # is an open file
@@ -764,12 +766,13 @@ def _start_service():
                 update_dict['server.socket_host'] = v
             elif k1 in ("server", "test", "auth", "log"):
                 update_dict[k1 + '.' + k2] = v
-            elif k1 in ("message", "database", "storage"):
+            elif k1 in ("message", "database", "storage", "authentication"):
                 # k2 = k2.replace('_', '.')
-                if k2 == "port":
+                if k2 in ("port", "db_port"):
                     engine_config[k1][k2] = int(v)
                 else:
                     engine_config[k1][k2] = v
+
         except ValueError as e:
             cherrypy.log.error("Ignoring environ '{}': " + str(e))
         except Exception as e:
@@ -821,9 +824,11 @@ def _start_service():
             logger_module.setLevel(engine_config[k1]["loglevel"])
     # TODO add more entries, e.g.: storage
     cherrypy.tree.apps['/osm'].root.engine.start(engine_config)
+    cherrypy.tree.apps['/osm'].root.authenticator.start(engine_config)
     try:
         cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
-    except EngineException:
+        cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
+    except (EngineException, AuthException):
         pass
     # getenv('OSMOPENMANO_TENANT', None)
 
