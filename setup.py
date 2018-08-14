@@ -15,7 +15,7 @@ setup(
     name=_name,
     description='OSM North Bound Interface',
     long_description=README,
-    version_command=('git describe --tags --long --dirty', 'pep440-git'),
+    version_command=('git describe --match v* --tags --long --dirty', 'pep440-git'),
     # version=VERSION,
     # python_requires='>3.5.0',
     author='ETSI OSM',
