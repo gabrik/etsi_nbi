@@ -254,20 +254,23 @@ class Engine(object):
                 clean_indata = clean_indata['userDefinedData']
         return clean_indata
 
-    def _check_dependencies_on_descriptor(self, session, item, descriptor_id):
+    def _check_dependencies_on_descriptor(self, session, item, descriptor_id, _id):
         """
         Check that the descriptor to be deleded is not a dependency of others
         :param session: client session information
         :param item: can be vnfds, nsds
-        :param descriptor_id: id of descriptor to be deleted
+        :param descriptor_id: id (provided by client) of descriptor to be deleted
+        :param _id: internal id of descriptor to be deleted
         :return: None or raises exception
         """
         if item == "vnfds":
             _filter = {"constituent-vnfd.ANYINDEX.vnfd-id-ref": descriptor_id}
             if self.get_item_list(session, "nsds", _filter):
                 raise EngineException("There are nsd that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
+            if self.get_item_list(session, "vnfrs", {"vnfd-id": _id}):
+                raise EngineException("There are vnfr that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
         elif item == "nsds":
-            _filter = {"nsdId": descriptor_id}
+            _filter = {"nsdId": _id}
             if self.get_item_list(session, "nsrs", _filter):
                 raise EngineException("There are nsr that depends on this NSD", http_code=HTTPStatus.CONFLICT)
 
@@ -672,6 +675,7 @@ class Engine(object):
                 "nsd-name-ref": nsd["name"],
                 "operational-events": [],   # "id", "timestamp", "description", "event",
                 "nsd-ref": nsd["id"],
+                "nsdId": nsd["_id"],
                 "instantiate_params": ns_request,
                 "ns-instance-config-ref": nsr_id,
                 "id": nsr_id,
@@ -921,7 +925,7 @@ class Engine(object):
             return filter
         if item == "users":
             filter["username"] = session["username"]
-        elif item in ("vnfds", "nsds", "nsrs"):
+        elif item in ("vnfds", "nsds", "nsrs", "vnfrs"):
             filter["_admin.projects_read.cont"] = ["ANY", session["project_id"]]
 
     def _add_delete_filter(self, session, item, filter):
@@ -1049,7 +1053,7 @@ class Engine(object):
             descriptor = self.get_item(session, item, _id)
             descriptor_id = descriptor.get("id")
             if descriptor_id:
-                self._check_dependencies_on_descriptor(session, item, descriptor_id)
+                self._check_dependencies_on_descriptor(session, item, descriptor_id, _id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
