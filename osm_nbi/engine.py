@@ -454,10 +454,10 @@ class Engine(object):
             for in_vld in get_iterable(indata.get("vld")):
                 for vldd in get_iterable(nsd.get("vld")):
                     if in_vld["name"] == vldd["name"] or in_vld["name"] == vldd["id"]:
-                            break
-                    else:
-                        raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
-                            in_vld["name"]))
+                        break
+                else:
+                    raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
+                        in_vld["name"]))
 
     def _format_new_data(self, session, item, indata):
         now = time()
@@ -671,7 +671,7 @@ class Engine(object):
                 "orchestration-progress": {},
                 # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
 
-                "crete-time": now,
+                "create-time": now,
                 "nsd-name-ref": nsd["name"],
                 "operational-events": [],   # "id", "timestamp", "description", "event",
                 "nsd-ref": nsd["id"],

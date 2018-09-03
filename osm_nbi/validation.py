@@ -155,8 +155,10 @@ ns_instantiate_internal_vld = {
                 "properties": {
                     "id-ref": name_schema,
                     "ip-address": ip_schema,
+                    # "mac-address": mac_schema,
                 },
-                "required": ["id-ref", "ip-address"],
+                "required": ["id-ref"],
+                "minProperties": 2,
                 "additionalProperties": False
             },
         }
@@ -210,6 +212,22 @@ ns_instantiate = {
                     "name": string_schema,
                     "vim-network-name": {"OneOf": [string_schema, object_schema]},
                     "ip-profile": object_schema,
+                    "vnfd-connection-point-ref": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "member-vnf-index-ref": name_schema,
+                                "vnfd-connection-point-ref": name_schema,
+                                "ip-address": ip_schema,
+                                # "mac-address": mac_schema,
+                            },
+                            "required": ["member-vnf-index-ref", "vnfd-connection-point-ref"],
+                            "minProperties": 3,
+                            "additionalProperties": False
+                        },
+                    }
                 },
                 "required": ["name"],
                 "additionalProperties": False
