@@ -120,6 +120,10 @@ class TestRest:
     def set_header(self, header):
         self.s.headers.update(header)
 
+    def unset_header(self, key):
+        if key in self.s.headers:
+            del self.s.headers[key]
+
     def test(self, name, description, method, url, headers, payload, expected_codes, expected_headers,
              expected_payload):
         """
@@ -249,10 +253,17 @@ class TestRest:
         # self.project = project
         r = self.test("TOKEN", "Obtain token", "POST", "/admin/v1/tokens", headers_json,
                       {"username": self.user, "password": self.password, "project_id": self.project},
-                      (200, 201), {"Content-Type": "application/json"}, "json")
+                      (200, 201), r_header_json, "json")
         response = r.json()
         self.token = response["id"]
         self.set_header({"Authorization": "Bearer {}".format(self.token)})
+
+    def remove_authorization(self):
+        if self.token:
+            self.test("TOKEN_DEL", "Delete token", "DELETE", "/admin/v1/tokens/{}".format(self.token), headers_json,
+                      None, (200, 201, 204), None, None)
+        self.token = None
+        self.unset_header("Authorization")
 
     def get_create_vim(self, test_osm):
         if self.vim_id:
@@ -300,7 +311,8 @@ class TestNonAuthorized:
     description = "test invalid URLs. methods and no authorization"
 
     @staticmethod
-    def run(engine, test_osm, manual_check):
+    def run(engine, test_osm, manual_check, test_params=None):
+        engine.remove_authorization()
         test_not_authorized_list = (
             ("NA1", "Invalid token", "GET", "/admin/v1/users", headers_json, None, 401, r_header_json, "json"),
             ("NA2", "Invalid URL", "POST", "/admin/v1/nonexist", headers_yaml, None, 405, r_header_yaml, "yaml"),
@@ -308,6 +320,102 @@ class TestNonAuthorized:
         )
         for t in test_not_authorized_list:
             engine.test(*t)
+
+
+class TestUsersProjects:
+    description = "test project and user creation"
+
+    @staticmethod
+    def run(engine, test_osm, manual_check, test_params=None):
+        engine.get_autorization()
+        engine.test("PU1", "Create project non admin", "POST", "/admin/v1/projects", headers_json, {"name": "P1"},
+                    (201, 204), {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
+        engine.test("PU2", "Create project admin", "POST", "/admin/v1/projects", headers_json,
+                    {"name": "Padmin", "admin": True}, (201, 204),
+                    {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
+        engine.test("PU3", "Create project bad format", "POST", "/admin/v1/projects", headers_json, {"name": 1}, 422,
+                    r_header_json, "json")
+        engine.test("PU4", "Create user with bad project", "POST", "/admin/v1/users", headers_json,
+                    {"username": "U1", "projects": ["P1", "P2", "Padmin"], "password": "pw1"}, 409,
+                    r_header_json, "json")
+        engine.test("PU5", "Create user with bad project and force", "POST", "/admin/v1/users?FORCE=True", headers_json,
+                    {"username": "U1", "projects": ["P1", "P2", "Padmin"], "password": "pw1"}, 201,
+                    {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
+        engine.test("PU6", "Create user 2", "POST", "/admin/v1/users", headers_json,
+                    {"username": "U2", "projects": ["P1"], "password": "pw2"}, 201,
+                    {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
+
+        engine.test("PU7", "Edit user U1, delete  P2 project", "PATCH", "/admin/v1/users/U1", headers_json,
+                    {"projects": {"$'P2'": None}}, 204, None, None)
+        res = engine.test("PU1", "Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
+                          headers_json, None, 200, None, json)
+        u1 = res.json()
+        # print(u1)
+        expected_projects = ["P1", "Padmin"]
+        if u1["projects"] != expected_projects:
+            raise TestException("User content projects '{}' different than expected '{}'. Edition has not done"
+                                " properly".format(u1["projects"], expected_projects))
+
+        engine.test("PU8", "Edit user U1, set Padmin as default project", "PUT", "/admin/v1/users/U1", headers_json,
+                    {"projects": {"$'Padmin'": None, "$+[0]": "Padmin"}}, 204, None, None)
+        res = engine.test("PU1", "Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
+                          headers_json, None, 200, None, json)
+        u1 = res.json()
+        # print(u1)
+        expected_projects = ["Padmin", "P1"]
+        if u1["projects"] != expected_projects:
+            raise TestException("User content projects '{}' different than expected '{}'. Edition has not done"
+                                " properly".format(u1["projects"], expected_projects))
+
+        engine.test("PU9", "Edit user U1, change password", "PATCH", "/admin/v1/users/U1", headers_json,
+                    {"password": "pw1_new"}, 204, None, None)
+
+        engine.test("PU10", "Change to project P1 non existing", "POST", "/admin/v1/tokens/", headers_json,
+                    {"project_id": "P1"}, 401, r_header_json, "json")
+
+        res = engine.test("PU1", "Change to user U1 project P1", "POST", "/admin/v1/tokens", headers_json,
+                          {"username": "U1", "password": "pw1_new", "project_id": "P1"}, (200, 201),
+                          r_header_json, "json")
+        response = res.json()
+        engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
+
+        engine.test("PU11", "Edit user projects non admin", "PUT", "/admin/v1/users/U1", headers_json,
+                    {"projects": {"$'P1'": None}}, 401, r_header_json, "json")
+        engine.test("PU12", "Add new project non admin", "POST", "/admin/v1/projects", headers_json,
+                    {"name": "P2"}, 401, r_header_json, "json")
+        engine.test("PU13", "Add new user non admin", "POST", "/admin/v1/users", headers_json,
+                    {"username": "U3", "projects": ["P1"], "password": "pw3"}, 401,
+                    r_header_json, "json")
+
+        res = engine.test("PU14", "Change to user U1 project Padmin", "POST", "/admin/v1/tokens", headers_json,
+                          {"project_id": "Padmin"}, (200, 201), r_header_json, "json")
+        response = res.json()
+        engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
+
+        engine.test("PU15", "Add new project admin", "POST", "/admin/v1/projects", headers_json, {"name": "P2"},
+                    (201, 204), {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
+        engine.test("PU16", "Add new user U3 admin", "POST", "/admin/v1/users",
+                    headers_json, {"username": "U3", "projects": ["P2"], "password": "pw3"}, (201, 204),
+                    {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
+        engine.test("PU17", "Edit user projects admin", "PUT", "/admin/v1/users/U3", headers_json,
+                    {"projects": ["P2"]}, 204, None, None)
+
+        engine.test("PU18", "Delete project P2 conflict", "DELETE", "/admin/v1/projects/P2", headers_json, None, 409,
+                    r_header_json, "json")
+        engine.test("PU19", "Delete project P2 forcing", "DELETE", "/admin/v1/projects/P2?FORCE=True", headers_json,
+                    None, 204, None, None)
+
+        engine.test("PU20", "Delete user U1. Conflict deleting own user", "DELETE", "/admin/v1/users/U1", headers_json,
+                    None, 409, r_header_json, "json")
+        engine.test("PU21", "Delete user U2", "DELETE", "/admin/v1/users/U2", headers_json, None, 204, None, None)
+        engine.test("PU22", "Delete user U3", "DELETE", "/admin/v1/users/U3", headers_json, None, 204, None, None)
+        # change to admin
+        engine.remove_authorization()   # To force get authorization
+        engine.get_autorization()
+        engine.test("PU23", "Delete user U1", "DELETE", "/admin/v1/users/U1", headers_json, None, 204, None, None)
+        engine.test("PU24", "Delete project P1", "DELETE", "/admin/v1/projects/P1", headers_json, None, 204, None, None)
+        engine.test("PU25", "Delete project Padmin", "DELETE", "/admin/v1/projects/Padmin", headers_json, None, 204,
+                    None, None)
 
 
 class TestFakeVim:
@@ -348,7 +456,7 @@ class TestFakeVim:
                        ]}
         ]
 
-    def run(self, engine, test_osm, manual_check):
+    def run(self, engine, test_osm, manual_check, test_params=None):
 
         vim_bad = self.vim.copy()
         vim_bad.pop("name")
@@ -393,33 +501,66 @@ class TestVIMSDN(TestFakeVim):
     def __init__(self):
         TestFakeVim.__init__(self)
 
-    def run(self, engine, test_osm, manual_check):
+    def run(self, engine, test_osm, manual_check, test_params=None):
         engine.get_autorization()
         # Added SDN
-        engine.test("SDN1", "Create SDN", "POST", "/admin/v1/sdns", headers_json, self.sdn, (201, 204),
+        engine.test("VIMSDN1", "Create SDN", "POST", "/admin/v1/sdns", headers_json, self.sdn, (201, 204),
                     {"Location": "/admin/v1/sdns/", "Content-Type": "application/json"}, "json")
-        sleep(5)
+        # sleep(5)
         # Edit SDN
-        engine.test("SDN1", "Edit SDN", "PATCH", "/admin/v1/sdns/<SDN1>", headers_json, {"name": "new_sdn_name"},
-                    (200, 201, 204), r_header_json, "json")
-        sleep(5)
+        engine.test("VIMSDN2", "Edit SDN", "PATCH", "/admin/v1/sdns/<VIMSDN1>", headers_json, {"name": "new_sdn_name"},
+                    204, None, None)
+        # sleep(5)
         # VIM with SDN
-        self.vim["config"]["sdn-controller"] = engine.test_ids["SDN1"]
+        self.vim["config"]["sdn-controller"] = engine.test_ids["VIMSDN1"]
         self.vim["config"]["sdn-port-mapping"] = self.port_mapping
-        engine.test("VIM2", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (200, 204, 201),
+        engine.test("VIMSDN3", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (200, 204, 201),
                     {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json"),
 
         self.port_mapping[0]["compute_node"] = "compute node XX"
-        engine.test("VIMSDN2", "Edit VIM change port-mapping", "PUT", "/admin/v1/vim_accounts/<VIM2>", headers_json,
-                    {"config": {"sdn-port-mapping": self.port_mapping}},
-                    (200, 201, 204), {"Content-Type": "application/json"}, "json")
-        engine.test("VIMSDN3", "Edit VIM remove port-mapping", "PUT", "/admin/v1/vim_accounts/<VIM2>", headers_json,
-                    {"config": {"sdn-port-mapping": None}},
-                    (200, 201, 204), {"Content-Type": "application/json"}, "json")
-        engine.test("VIMSDN4", "Delete VIM remove port-mapping", "DELETE", "/admin/v1/vim_accounts/<VIM2>",
-                    headers_json, None, (202, 201, 204), None, 0)
-        engine.test("VIMSDN5", "Delete SDN", "DELETE", "/admin/v1/sdns/<SDN1>", headers_json, None,
-                    (202, 201, 204), None, 0)
+        engine.test("VIMSDN4", "Edit VIM change port-mapping", "PUT", "/admin/v1/vim_accounts/<VIMSDN3>", headers_json,
+                    {"config": {"sdn-port-mapping": self.port_mapping}}, 204, None, None)
+        engine.test("VIMSDN5", "Edit VIM remove port-mapping", "PUT", "/admin/v1/vim_accounts/<VIMSDN3>", headers_json,
+                    {"config": {"sdn-port-mapping": None}}, 204, None, None)
+
+        if not test_osm:
+            # delete with FORCE
+            engine.test("VIMSDN6", "Delete VIM remove port-mapping", "DELETE",
+                        "/admin/v1/vim_accounts/<VIMSDN3>?FORCE=True", headers_json, None, 202, None, 0)
+            engine.test("VIMSDN7", "Delete SDNC", "DELETE", "/admin/v1/sdns/<VIMSDN1>?FORCE=True", headers_json, None,
+                        202, None, 0)
+
+            engine.test("VIMSDN8", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<VIMSDN3>", headers_yaml,
+                        None, 404, r_header_yaml, "yaml")
+            engine.test("VIMSDN9", "Check SDN is deleted", "GET", "/admin/v1/sdns/<VIMSDN1>", headers_yaml, None,
+                        404, r_header_yaml, "yaml")
+        else:
+            # delete and wait until is really deleted
+            engine.test("VIMSDN6", "Delete VIM remove port-mapping", "DELETE", "/admin/v1/vim_accounts/<VIMSDN3>",
+                        headers_json, None, (202, 201, 204), None, 0)
+            engine.test("VIMSDN7", "Delete SDN", "DELETE", "/admin/v1/sdns/<VIMSDN1>", headers_json, None,
+                        (202, 201, 204), None, 0)
+            wait = timeout
+            while wait >= 0:
+                r = engine.test("VIMSDN8", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<VIMSDN3>",
+                                headers_yaml, None, None, r_header_yaml, "yaml")
+                if r.status_code == 404:
+                    break
+                elif r.status_code == 200:
+                    wait -= 5
+                    sleep(5)
+            else:
+                raise TestException("Vim created at 'VIMSDN3' is not delete after {} seconds".format(timeout))
+            while wait >= 0:
+                r = engine.test("VIMSDN9", "Check SDNC is deleted", "GET", "/admin/v1/sdns/<VIMSDN1>",
+                                headers_yaml, None, None, r_header_yaml, "yaml")
+                if r.status_code == 404:
+                    break
+                elif r.status_code == 200:
+                    wait -= 5
+                    sleep(5)
+            else:
+                raise TestException("SDNC created at 'VIMSDN1' is not delete after {} seconds".format(timeout))
 
 
 class TestDeploy:
@@ -776,10 +917,7 @@ class TestDeployHackfest4(TestDeploy):
                         default-value: '/home/ubuntu/touched'
         """
         engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
-                    "/vnfpkgm/v1/vnf_packages/<{}>".format(self.vnfds_test[0]),
-                    headers_yaml, payload, 200,
-                    r_header_yaml, yaml)
-        self.vnfds_test.append("DEPLOY" + str(self.step))
+                    "/vnfpkgm/v1/vnf_packages/<{}>".format(self.vnfds_test[0]), headers_yaml, payload, 204, None, None)
         self.step += 1
 
     def run(self, engine, test_osm, manual_check, test_params=None):
@@ -906,6 +1044,7 @@ if __name__ == "__main__":
         test_classes = {
             "NonAuthorized": TestNonAuthorized,
             "FakeVIM": TestFakeVim,
+            "TestUsersProjects": TestUsersProjects,
             "VIM-SDN": TestVIMSDN,
             "Deploy-Custom": TestDeploy,
             "Deploy-Hackfest-Cirros": TestDeployHackfestCirros,

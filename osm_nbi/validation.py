@@ -12,8 +12,8 @@ Validator of input data using JSON schemas for those items that not contains an 
 
 # Basis schemas
 patern_name = "^[ -~]+$"
+nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\.\$'\"]+$"}
 passwd_schema = {"type": "string", "minLength": 1, "maxLength": 60}
-nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()'\"]+$"}
 name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^,;()'\"]+$"}
 string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
 xml_text_schema = {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^']+$"}
@@ -48,6 +48,15 @@ schema_version_2 = {"type": "integer", "minimum": 2, "maximum": 2}
 log_level_schema = {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}
 checksum_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}
 size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
+array_edition_schema = {
+    "type": "object",
+    "patternProperties": {
+        "^\$": "Any"
+    },
+    "additionalProperties": False,
+    "minProperties": 1,
+}
+
 
 ns_instantiate_vdu = {
     "title": "ns action instantiate input schema for vdu",
@@ -300,7 +309,7 @@ vim_account_edit_schema = {
         "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
         "vim_username": nameshort_schema,
-        "vim_password": nameshort_schema,
+        "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
     "additionalProperties": False
@@ -324,7 +333,7 @@ vim_account_new_schema = {
         # "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
         "vim_user": nameshort_schema,
-        "vim_password": nameshort_schema,
+        "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
     "required": ["name", "vim_url", "vim_type", "vim_user", "vim_password", "vim_tenant_name"],
@@ -385,7 +394,7 @@ sdn_port_mapping_schema = {
 }
 sdn_external_port_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
-    "title": "External port ingformation",
+    "title": "External port information",
     "type": "object",
     "properties": {
         "port": {"type": "string", "minLength": 1, "maxLength": 60},
@@ -395,8 +404,67 @@ sdn_external_port_schema = {
     "required": ["port"]
 }
 
+# USERS
+user_project_schema = {
+    "type": "array",
+    "minItems": 1,
+    "items": nameshort_schema,
+}
+user_new_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "New user schema",
+    "type": "object",
+    "properties": {
+        "username": nameshort_schema,
+        "password": passwd_schema,
+        "projects": user_project_schema,
+    },
+    "required": ["username", "password", "projects"],
+    "additionalProperties": False
+}
+user_edit_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "User edit schema for administrators",
+    "type": "object",
+    "properties": {
+        "password": passwd_schema,
+        "projects": {
+            "oneOff": [
+                user_project_schema,
+                array_edition_schema
+            ]
+        },
+    }
+}
+
+# PROJECTS
+project_new_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "New project schema for administrators",
+    "type": "object",
+    "properties": {
+        "name": nameshort_schema,
+        "admin": bool_schema,
+    },
+    "required": ["name"],
+    "additionalProperties": False
+}
+project_edit_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "Project edit schema for administrators",
+    "type": "object",
+    "properties": {
+        "admin": bool_schema,
+    },
+    "additionalProperties": False,
+    "minProperties": 1
+}
+
+# GLOBAL SCHEMAS
 
 nbi_new_input_schemas = {
+    "users": user_new_schema,
+    "projects": project_new_schema,
     "vim_accounts": vim_account_new_schema,
     "sdns": sdn_new_schema,
     "ns_instantiate": ns_instantiate,
@@ -405,6 +473,8 @@ nbi_new_input_schemas = {
 }
 
 nbi_edit_input_schemas = {
+    "users": user_edit_schema,
+    "projects": project_edit_schema,
     "vim_accounts": vim_account_edit_schema,
     "sdns": sdn_edit_schema
 }
@@ -416,7 +486,7 @@ class ValidationError(Exception):
 
 def validate_input(indata, item, new=True):
     """
-    Validates input data agains json schema
+    Validates input data against json schema
     :param indata: user input data. Should be a dictionary
     :param item: can be users, projects, vims, sdns, ns_xxxxx
     :param new: True if the validation is for creating or False if it is for editing

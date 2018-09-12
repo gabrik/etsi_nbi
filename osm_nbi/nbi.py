@@ -76,7 +76,7 @@ URL: /osm                                                       GET     POST    
             /tokens                                             O       O
                 /<id>                                           O                       O
             /users                                              O       O
-                /<id>                                           O                       O
+                /<id>                                           O               O       O       O
             /projects                                           O       O
                 /<id>                                           O                       O
             /vims_accounts  (also vims for compatibility)       O       O
@@ -152,7 +152,7 @@ class Server(object):
                                "<ID>": {"METHODS": ("GET", "DELETE")}
                                },
                     "users": {"METHODS": ("GET", "POST"),
-                              "<ID>": {"METHODS": ("GET", "POST", "DELETE")}
+                              "<ID>": {"METHODS": ("GET", "POST", "DELETE", "PATCH", "PUT")}
                               },
                     "projects": {"METHODS": ("GET", "POST"),
                                  "<ID>": {"METHODS": ("GET", "DELETE")}
@@ -511,7 +511,7 @@ class Server(object):
             return f
 
         elif len(args) == 2 and args[0] == "db-clear":
-            return self.engine.del_item_list({"project_id": "admin"}, args[1], {})
+            return self.engine.del_item_list({"project_id": "admin", "admin": True}, args[1], kwargs)
         elif args and args[0] == "prune":
             return self.engine.prune()
         elif args and args[0] == "login":
@@ -730,6 +730,7 @@ class Server(object):
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
 
             elif method in ("PUT", "PATCH"):
+                outdata = None
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
@@ -738,10 +739,9 @@ class Server(object):
                                                            cherrypy.request.headers)
                     if not completed:
                         cherrypy.response.headers["Transaction-Id"] = id
-                    cherrypy.response.status = HTTPStatus.NO_CONTENT.value
-                    outdata = None
                 else:
-                    outdata = {"id": self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)}
+                    self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)
+                cherrypy.response.status = HTTPStatus.NO_CONTENT.value
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)

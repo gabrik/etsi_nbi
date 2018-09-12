@@ -12,7 +12,7 @@ import logging
 from random import choice as random_choice
 from uuid import uuid4
 from hashlib import sha256, md5
-from osm_common.dbbase import DbException
+from osm_common.dbbase import DbException, deep_update
 from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from http import HTTPStatus
@@ -28,29 +28,6 @@ class EngineException(Exception):
     def __init__(self, message, http_code=HTTPStatus.BAD_REQUEST):
         self.http_code = http_code
         Exception.__init__(self, message)
-
-
-def _deep_update(dict_to_change, dict_reference):
-    """
-    Modifies one dictionary with the information of the other following https://tools.ietf.org/html/rfc7396
-    :param dict_to_change:  Ends modified
-    :param dict_reference: reference
-    :return: none
-    """
-    for k in dict_reference:
-        if dict_reference[k] is None:   # None->Anything
-            if k in dict_to_change:
-                del dict_to_change[k]
-        elif not isinstance(dict_reference[k], dict):  # NotDict->Anything
-            dict_to_change[k] = dict_reference[k]
-        elif k not in dict_to_change:  # Dict->Empty
-            dict_to_change[k] = deepcopy(dict_reference[k])
-            _deep_update(dict_to_change[k], dict_reference[k])
-        elif isinstance(dict_to_change[k], dict):  # Dict->Dict
-            _deep_update(dict_to_change[k], dict_reference[k])
-        else:       # Dict->NotDict
-            dict_to_change[k] = deepcopy(dict_reference[k])
-            _deep_update(dict_to_change[k], dict_reference[k])
 
 
 def get_iterable(input):
@@ -254,6 +231,18 @@ class Engine(object):
                 clean_indata = clean_indata['userDefinedData']
         return clean_indata
 
+    def _check_project_dependencies(self, project_id):
+        """
+        Check if a project can be deleted
+        :param session:
+        :param _id:
+        :return:
+        """
+        # TODO Is it needed to check descriptors _admin.project_read/project_write??
+        _filter = {"projects": project_id}
+        if self.db.get_list("users", _filter):
+            raise EngineException("There are users that uses this project", http_code=HTTPStatus.CONFLICT)
+
     def _check_dependencies_on_descriptor(self, session, item, descriptor_id, _id):
         """
         Check that the descriptor to be deleded is not a dependency of others
@@ -298,22 +287,35 @@ class Engine(object):
                 raise EngineException("Descriptor error at nsdId='{}' references a non exist nsd".format(nsd_id),
                                       http_code=HTTPStatus.CONFLICT)
 
+    def _check_edition(self, session, item, indata, id, force=False):
+        if item == "users":
+            if indata.get("projects"):
+                if not session["admin"]:
+                    raise EngineException("Needed admin privileges to edit user projects", HTTPStatus.UNAUTHORIZED)
+            if indata.get("password"):
+                # regenerate salt and encrypt password
+                salt = uuid4().hex
+                indata["_admin"] = {"salt": salt}
+                indata["password"] = sha256(indata["password"].encode('utf-8') + salt.encode('utf-8')).hexdigest()
+
     def _validate_new_data(self, session, item, indata, id=None, force=False):
         if item == "users":
-            if not indata.get("username"):
-                raise EngineException("missing 'username'", HTTPStatus.UNPROCESSABLE_ENTITY)
-            if not indata.get("password"):
-                raise EngineException("missing 'password'", HTTPStatus.UNPROCESSABLE_ENTITY)
-            if not indata.get("projects"):
-                raise EngineException("missing 'projects'", HTTPStatus.UNPROCESSABLE_ENTITY)
             # check username not exists
-            if self.db.get_one(item, {"username": indata.get("username")}, fail_on_empty=False, fail_on_more=False):
+            if not id and self.db.get_one(item, {"username": indata.get("username")}, fail_on_empty=False,
+                                          fail_on_more=False):
                 raise EngineException("username '{}' exists".format(indata["username"]), HTTPStatus.CONFLICT)
+            # check projects
+            if not force:
+                for p in indata["projects"]:
+                    if p == "admin":
+                        continue
+                    if not self.db.get_one("projects", {"_id": p}, fail_on_empty=False, fail_on_more=False):
+                        raise EngineException("project '{}' does not exists".format(p), HTTPStatus.CONFLICT)
         elif item == "projects":
             if not indata.get("name"):
                 raise EngineException("missing 'name'")
             # check name not exists
-            if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
+            if not id and self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
                 raise EngineException("name '{}' exists".format(indata["name"]), HTTPStatus.CONFLICT)
         elif item in ("vnfds", "nsds"):
             filter = {"id": indata["id"]}
@@ -821,6 +823,9 @@ class Engine(object):
         :return: _id: identity of the inserted data.
         """
 
+        if not session["admin"] and item in ("users", "projects"):
+            raise EngineException("Needed admin privileges to perform this operation", HTTPStatus.UNAUTHORIZED)
+
         try:
             item_envelop = item
             if item in ("nsds", "vnfds"):
@@ -829,7 +834,7 @@ class Engine(object):
 
             # Override descriptor with query string kwargs
             self._update_descriptor(content, kwargs)
-            if not indata and item not in ("nsds", "vnfds"):
+            if not content and item not in ("nsds", "vnfds"):
                 raise EngineException("Empty payload")
 
             validate_input(content, item, new=True)
@@ -838,7 +843,7 @@ class Engine(object):
                 # in this case the input descriptor is not the data to be stored
                 return self.new_nsr(rollback, session, ns_request=content)
 
-            self._validate_new_data(session, item_envelop, content, force)
+            self._validate_new_data(session, item_envelop, content, force=force)
             if item in ("nsds", "vnfds"):
                 content = {"_admin": {"userDefinedData": content}}
             self._format_new_data(session, item, content)
@@ -921,7 +926,7 @@ class Engine(object):
         #     raise EngineException("Cannot get ns_instance '{}': {}".format(e), HTTPStatus.NOT_FOUND)
 
     def _add_read_filter(self, session, item, filter):
-        if session["project_id"] == "admin":  # allows all
+        if session["admin"]:  # allows all
             return filter
         if item == "users":
             filter["username"] = session["username"]
@@ -929,7 +934,7 @@ class Engine(object):
             filter["_admin.projects_read.cont"] = ["ANY", session["project_id"]]
 
     def _add_delete_filter(self, session, item, filter):
-        if session["project_id"] != "admin" and item in ("users", "projects"):
+        if not session["admin"] and item in ("users", "projects"):
             raise EngineException("Only admin users can perform this task", http_code=HTTPStatus.FORBIDDEN)
         if item == "users":
             if filter.get("_id") == session["username"] or filter.get("username") == session["username"]:
@@ -937,7 +942,7 @@ class Engine(object):
         elif item == "project":
             if filter.get("_id") == session["project_id"]:
                 raise EngineException("You cannot delete your own project", http_code=HTTPStatus.CONFLICT)
-        elif item in ("vnfds", "nsds") and session["project_id"] != "admin":
+        elif item in ("vnfds", "nsds") and not session["admin"]:
             filter["_admin.projects_write.cont"] = ["ANY", session["project_id"]]
 
     def get_file(self, session, item, _id, path=None, accept_header=None):
@@ -1054,6 +1059,9 @@ class Engine(object):
             descriptor_id = descriptor.get("id")
             if descriptor_id:
                 self._check_dependencies_on_descriptor(session, item, descriptor_id, _id)
+        elif item == "projects":
+            if not force:
+                self._check_project_dependencies(_id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
@@ -1167,8 +1175,9 @@ class Engine(object):
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
-        _deep_update(content, indata)
-        self._validate_new_data(session, item, content, id, force)
+        self._check_edition(session, item, indata, id, force)
+        deep_update(content, indata)
+        self._validate_new_data(session, item, content, id=id, force=force)
         # self._format_new_data(session, item, content)
         self.db.replace(item, id, content)
         if item in ("vim_accounts", "sdns"):
@@ -1191,6 +1200,8 @@ class Engine(object):
         :param force: If True avoid some dependence checks
         :return: dictionary, raise exception if not found.
         """
+        if not session["admin"] and item == "projects":
+            raise EngineException("Needed admin privileges to perform this operation", HTTPStatus.UNAUTHORIZED)
 
         content = self.get_item(session, item, _id)
         return self._edit_item(session, item, _id, content, indata, kwargs, force)
