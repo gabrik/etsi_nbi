@@ -35,6 +35,7 @@ vlan_schema = {"type": "integer", "minimum": 1, "maximum": 4095}
 vlan1000_schema = {"type": "integer", "minimum": 1000, "maximum": 4095}
 mac_schema = {"type": "string",
               "pattern": "^[0-9a-fA-F][02468aceACE](:[0-9a-fA-F]{2}){5}$"}  # must be unicast: LSB bit of MSB byte ==0
+dpid_Schema = {"type": "string", "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){7}$"}
 # mac_schema={"type":"string", "pattern":"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"}
 ip_schema = {"type": "string",
              "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"}
@@ -55,6 +56,11 @@ array_edition_schema = {
     },
     "additionalProperties": False,
     "minProperties": 1,
+}
+nameshort_list_schema = {
+    "type": "array",
+    "minItems": 1,
+    "items": nameshort_schema,
 }
 
 
@@ -344,7 +350,7 @@ vim_account_new_schema = {
 sdn_properties = {
     "name": name_schema,
     "description": description_schema,
-    "dpid": {"type": "string", "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){7}$"},
+    "dpid": dpid_Schema,
     "ip": ip_schema,
     "port": port_schema,
     "type": {"type": "string", "enum": ["opendaylight", "floodlight", "onos"]},
@@ -404,12 +410,73 @@ sdn_external_port_schema = {
     "required": ["port"]
 }
 
-# USERS
-user_project_schema = {
-    "type": "array",
-    "minItems": 1,
-    "items": nameshort_schema,
+# PDUs
+pdu_interface = {
+    "type": "object",
+    "properties": {
+        "name": nameshort_schema,
+        "mgmt": bool_schema,
+        "type": {"enum": ["overlay", 'underlay']},
+        "ip_address": ip_schema,
+        # TODO, add user, password, ssh-key
+        "mac_address": mac_schema,
+        "vim_network_name": nameshort_schema,  # interface is connected to one vim network, or switch port
+        "vim_network_id": nameshort_schema,
+        # provide this in case SDN assist must deal with this interface
+        "switch_dpid": dpid_Schema,
+        "switch_port": nameshort_schema,
+        "switch_mac": nameshort_schema,
+        "switch_vlan": vlan_schema,
+    },
+    "required": ["name", "mgmt", "ip_address"],
+    "additionalProperties": False
 }
+pdu_new_schema = {
+    "title": "pdu creation input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": nameshort_schema,
+        "type": nameshort_schema,
+        "description": description_schema,
+        "shared": bool_schema,
+        "vims": nameshort_list_schema,
+        "vim_accounts": nameshort_list_schema,
+        "interfaces": {
+            "type": "array",
+            "items": {"type": pdu_interface},
+            "minItems": 1
+        }
+    },
+    "required": ["name", "type", "interfaces"],
+    "additionalProperties": False
+}
+
+pdu_edit_schema = {
+    "title": "pdu edit input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": nameshort_schema,
+        "type": nameshort_schema,
+        "description": description_schema,
+        "shared": bool_schema,
+        "vims": {"oneOff": [array_edition_schema, nameshort_list_schema]},
+        "vim_accounts": {"oneOff": [array_edition_schema, nameshort_list_schema]},
+        "interfaces": {"oneOff": [
+            array_edition_schema,
+            {
+                "type": "array",
+                "items": {"type": pdu_interface},
+                "minItems": 1
+            }
+        ]}
+    },
+    "additionalProperties": False,
+    "minProperties": 1
+}
+
+# USERS
 user_new_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "title": "New user schema",
@@ -417,7 +484,7 @@ user_new_schema = {
     "properties": {
         "username": nameshort_schema,
         "password": passwd_schema,
-        "projects": user_project_schema,
+        "projects": nameshort_list_schema,
     },
     "required": ["username", "password", "projects"],
     "additionalProperties": False
@@ -430,11 +497,13 @@ user_edit_schema = {
         "password": passwd_schema,
         "projects": {
             "oneOff": [
-                user_project_schema,
+                nameshort_list_schema,
                 array_edition_schema
             ]
         },
-    }
+    },
+    "minProperties": 1,
+    "additionalProperties": False
 }
 
 # PROJECTS
@@ -469,14 +538,16 @@ nbi_new_input_schemas = {
     "sdns": sdn_new_schema,
     "ns_instantiate": ns_instantiate,
     "ns_action": ns_action,
-    "ns_scale": ns_scale
+    "ns_scale": ns_scale,
+    "pdus": pdu_new_schema,
 }
 
 nbi_edit_input_schemas = {
     "users": user_edit_schema,
     "projects": project_edit_schema,
     "vim_accounts": vim_account_edit_schema,
-    "sdns": sdn_edit_schema
+    "sdns": sdn_edit_schema,
+    "pdus": pdu_edit_schema,
 }
 
 

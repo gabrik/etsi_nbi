@@ -29,15 +29,15 @@ class EngineException(Exception):
         Exception.__init__(self, message)
 
 
-def get_iterable(input):
+def get_iterable(input_var):
     """
-    Returns an iterable, in case input is None it just returns an empty tuple
-    :param input:
-    :return: iterable
+    Returns an iterable, in case input_var is None it just returns an empty tuple
+    :param input_var: can be a list, tuple or None
+    :return: input_var or () if it is None
     """
-    if input is None:
+    if input_var is None:
         return ()
-    return input
+    return input_var
 
 
 class Engine(object):
@@ -137,14 +137,24 @@ class Engine(object):
     def _check_project_dependencies(self, project_id):
         """
         Check if a project can be deleted
-        :param session:
-        :param _id:
+        :param project_id:
         :return:
         """
         # TODO Is it needed to check descriptors _admin.project_read/project_write??
         _filter = {"projects": project_id}
         if self.db.get_list("users", _filter):
             raise EngineException("There are users that uses this project", http_code=HTTPStatus.CONFLICT)
+
+    def _check_pdus_usage(self, pdu_id):
+        """
+        Check if a pdu can be deleted
+        :param pdu_id:
+        :return:
+        """
+        # TODO Is it needed to check descriptors _admin.project_read/project_write??
+        _filter = {"vdur.pdu-id": pdu_id}
+        if self.db.get_list("vnfrs", _filter):
+            raise EngineException("There are ns that uses this pdu", http_code=HTTPStatus.CONFLICT)
 
     def _check_dependencies_on_descriptor(self, session, item, descriptor_id, _id):
         """
@@ -380,12 +390,12 @@ class Engine(object):
         else:
             if not indata.get("_id"):
                 indata["_id"] = str(uuid4())
-            if item in ("vnfds", "nsds", "nsrs", "vnfrs"):
+            if item in ("vnfds", "nsds", "nsrs", "vnfrs", "pdus"):
                 if not indata["_admin"].get("projects_read"):
                     indata["_admin"]["projects_read"] = [session["project_id"]]
                 if not indata["_admin"].get("projects_write"):
                     indata["_admin"]["projects_write"] = [session["project_id"]]
-            if item in ("vnfds", "nsds"):
+            if item in ("vnfds", "nsds", "pdus"):
                 indata["_admin"]["onboardingState"] = "CREATED"
                 indata["_admin"]["operationalState"] = "DISABLED"
                 indata["_admin"]["usageSate"] = "NOT_IN_USE"
@@ -642,6 +652,8 @@ class Engine(object):
                         "internal-connection-point": [],
                         "interfaces": [],
                     }
+                    if vnfd.get("pdu-type"):
+                        vdur["pdu-type"] = vnfd["pdu-type"]
                     # TODO volumes: name, volume-id
                     for icp in vdu.get("internal-connection-point", ()):
                         vdu_icp = {
@@ -833,7 +845,7 @@ class Engine(object):
             return filter
         if item == "users":
             filter["username"] = session["username"]
-        elif item in ("vnfds", "nsds", "nsrs", "vnfrs"):
+        elif item in ("vnfds", "nsds", "nsrs", "vnfrs", "pdus"):
             filter["_admin.projects_read.cont"] = ["ANY", session["project_id"]]
 
     def _add_delete_filter(self, session, item, filter):
@@ -845,7 +857,7 @@ class Engine(object):
         elif item == "project":
             if filter.get("_id") == session["project_id"]:
                 raise EngineException("You cannot delete your own project", http_code=HTTPStatus.CONFLICT)
-        elif item in ("vnfds", "nsds") and not session["admin"]:
+        elif item in ("vnfds", "nsds", "pdus") and not session["admin"]:
             filter["_admin.projects_write.cont"] = ["ANY", session["project_id"]]
 
     def get_file(self, session, item, _id, path=None, accept_header=None):
@@ -965,6 +977,9 @@ class Engine(object):
         elif item == "projects":
             if not force:
                 self._check_project_dependencies(_id)
+        elif item == "pdus":
+            if not force:
+                self._check_pdus_usage(_id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
@@ -975,6 +990,9 @@ class Engine(object):
             v = self.db.del_one(item, {"_id": _id})
             self.db.del_list("nslcmops", {"nsInstanceId": _id})
             self.db.del_list("vnfrs", {"nsr-id-ref": _id})
+            # set all used pdus as free
+            self.db.set_list("pdus", {"_admin.usage.nsr_id": _id},
+                             {"_admin.usageSate": "NOT_IN_USE", "_admin.usage": None})
             self.msg.write("ns", "deleted", {"_id": _id})
             return v
         if item in ("vim_accounts", "sdns") and not force:

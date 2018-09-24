@@ -75,6 +75,9 @@ URL: /osm                                                       GET     POST    
                 /<vnfInstanceId>                                O
             /subscriptions                                      5       5
                 /<subscriptionId>                               5                       X
+        /pdu/v1
+            /pdu_descriptor                                     O       O
+                /<id>                                           O               O       O       O
         /admin/v1
             /tokens                                             O       O
                 /<id>                                           O                       O
@@ -170,6 +173,13 @@ class Server(object):
                     "sdns": {"METHODS": ("GET", "POST"),
                              "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                              },
+                }
+            },
+            "pdu": {
+                "v1": {
+                    "pdu_descriptors": {"METHODS": ("GET", "POST"),
+                                        "<ID>": {"METHODS": ("GET", "POST", "DELETE", "PATCH", "PUT")}
+                                        },
                 }
             },
             "nsd": {
@@ -624,6 +634,8 @@ class Server(object):
                     engine_item = "nslcmops"
                 if item == "vnfrs" or item == "vnf_instances":
                     engine_item = "vnfrs"
+            elif topic == "pdu":
+                engine_item = "pdus"
             if engine_item == "vims":   # TODO this is for backward compatibility, it will remove in the future
                 engine_item = "vim_accounts"
 
