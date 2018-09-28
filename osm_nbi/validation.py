@@ -12,16 +12,18 @@ Validator of input data using JSON schemas for those items that not contains an 
 
 # Basis schemas
 patern_name = "^[ -~]+$"
+nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\.\$'\"]+$"}
 passwd_schema = {"type": "string", "minLength": 1, "maxLength": 60}
-nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()'\"]+$"}
 name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^,;()'\"]+$"}
 string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
 xml_text_schema = {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^']+$"}
 description_schema = {"type": ["string", "null"], "maxLength": 255, "pattern": "^[^'\"]+$"}
-id_schema_fake = {"type": "string", "minLength": 2,
-                  "maxLength": 36}
+id_schema_fake = {"type": "string", "minLength": 2, "maxLength": 36}
+bool_schema = {"type": "boolean"}
+null_schema = {"type": "null"}
 # "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
+time_schema = {"type": "string", "pattern": "^[0-9]{4}-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]([0-5]:){2}"}
 pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\.[0-9a-fA-F]$"}
 http_schema = {"type": "string", "pattern": "^https?://[^'\"=]+$"}
 bandwidth_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]bps)?$"}
@@ -46,7 +48,134 @@ schema_version_2 = {"type": "integer", "minimum": 2, "maximum": 2}
 log_level_schema = {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}
 checksum_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}
 size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
+array_edition_schema = {
+    "type": "object",
+    "patternProperties": {
+        "^\$": "Any"
+    },
+    "additionalProperties": False,
+    "minProperties": 1,
+}
 
+
+ns_instantiate_vdu = {
+    "title": "ns action instantiate input schema for vdu",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "id": name_schema,
+        "volume": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": name_schema,
+                    "vim-volume-id": name_schema,
+                },
+                "required": ["name", "vim-volume-id"],
+                "additionalProperties": False
+            }
+        },
+        "interface": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": name_schema,
+                    "ip-address": ip_schema,
+                    "mac-address": mac_schema,
+                    "floating-ip-required": bool_schema,
+                },
+                "required": ["name"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["id"],
+    "additionalProperties": False
+}
+
+ip_profile_dns_schema = {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "properties": {
+            "address": ip_schema,
+        },
+        "required": ["address"],
+        "additionalProperties": False
+    }
+}
+
+ip_profile_dhcp_schema = {
+    "type": "object",
+    "properties": {
+        "enabled": {"type": "boolean"},
+        "count": integer1_schema,
+        "start-address": ip_schema
+    },
+    "additionalProperties": False,
+}
+
+ip_profile_schema = {
+    "title": "ip profile validation schame",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "ip-version": {"enum": ["ipv4", "ipv6"]},
+        "subnet-address": ip_prefix_schema,
+        "gateway-address": ip_schema,
+        "dns-server": ip_profile_dns_schema,
+        "dhcp-params": ip_profile_dhcp_schema,
+    }
+}
+
+ip_profile_update_schema = {
+    "title": "ip profile validation schame",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "ip-version": {"enum": ["ipv4", "ipv6"]},
+        "subnet-address": {"oneOf": [null_schema, ip_prefix_schema]},
+        "gateway-address": {"oneOf": [null_schema, ip_schema]},
+        "dns-server": {"oneOf": [null_schema, ip_profile_dns_schema]},
+
+        "dhcp-params": {"oneOf": [null_schema, ip_profile_dhcp_schema]},
+    },
+    "additionalProperties": False
+}
+
+ns_instantiate_internal_vld = {
+    "title": "ns action instantiate input schema for vdu",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": name_schema,
+        "vim-network-name": name_schema,
+        "ip-profile": ip_profile_update_schema,
+        "internal-connection-point": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id-ref": name_schema,
+                    "ip-address": ip_schema,
+                    # "mac-address": mac_schema,
+                },
+                "required": ["id-ref"],
+                "minProperties": 2,
+                "additionalProperties": False
+            },
+        }
+    },
+    "required": ["name"],
+    "minProperties": 2,
+    "additionalProperties": False
+}
 
 ns_instantiate = {
     "title": "ns action instantiate input schema",
@@ -54,10 +183,11 @@ ns_instantiate = {
     "type": "object",
     "properties": {
         "nsName": name_schema,
-        "nsDescription": description_schema,
+        "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
         "vimAccountId": id_schema,
         "ssh_keys": {"type": "string"},
+        "nsr_id": id_schema,
         "vnf": {
             "type": "array",
             "minItems": 1,
@@ -66,8 +196,20 @@ ns_instantiate = {
                 "properties": {
                     "member-vnf-index": name_schema,
                     "vimAccountId": id_schema,
+                    "vdu": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": ns_instantiate_vdu,
+                    },
+                    "internal-vld": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": ns_instantiate_internal_vld
+                    }
                 },
-                "required": ["member-vnf-index"]
+                "required": ["member-vnf-index"],
+                "minProperties": 2,
+                "additionalProperties": False
             }
         },
         "vld": {
@@ -79,25 +221,74 @@ ns_instantiate = {
                     "name": string_schema,
                     "vim-network-name": {"OneOf": [string_schema, object_schema]},
                     "ip-profile": object_schema,
+                    "vnfd-connection-point-ref": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "member-vnf-index-ref": name_schema,
+                                "vnfd-connection-point-ref": name_schema,
+                                "ip-address": ip_schema,
+                                # "mac-address": mac_schema,
+                            },
+                            "required": ["member-vnf-index-ref", "vnfd-connection-point-ref"],
+                            "minProperties": 3,
+                            "additionalProperties": False
+                        },
+                    }
                 },
-                "required": ["name"]
+                "required": ["name"],
+                "additionalProperties": False
             }
         },
     },
-    "required": ["nsName", "nsdId", "vimAccountId"]
+    "required": ["nsName", "nsdId", "vimAccountId"],
+    "additionalProperties": False
 }
 
 ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive execution
-    "title": "ns action update input schema",
+    "title": "ns action input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
         "member_vnf_index": name_schema,
         "vnf_member_index": name_schema,  # TODO for backward compatibility. To remove in future
+        "vdu_id": name_schema,
         "primitive": name_schema,
         "primitive_params": {"type": "object"},
     },
     "required": ["primitive", "primitive_params"],   # TODO add member_vnf_index
+    "additionalProperties": False
+}
+ns_scale = {   # TODO for the moment it is only VDU-scaling
+    "title": "ns scale input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "scaleType": {"enum": ["SCALE_VNF"]},
+        "scaleVnfData": {
+            "type": "object",
+            "properties": {
+                "vnfInstanceId": name_schema,
+                "scaleVnfType": {"enum": ["SCALE_OUT", 'SCALE_IN']},
+                "scaleByStepData": {
+                    "type": "object",
+                    "properties": {
+                        "scaling-group-descriptor": name_schema,
+                        "member-vnf-index": name_schema,
+                        "scaling-policy": name_schema,
+                    },
+                    "required": ["scaling-group-descriptor", "member-vnf-index"],
+                    "additionalProperties": False
+                },
+            },
+            "required": ["scaleVnfType", "scaleByStepData"],  # vnfInstanceId
+            "additionalProperties": False
+        },
+        "scaleTime": time_schema,
+    },
+    "required": ["scaleType", "scaleVnfData"],
     "additionalProperties": False
 }
 
@@ -118,7 +309,7 @@ vim_account_edit_schema = {
         "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
         "vim_username": nameshort_schema,
-        "vim_password": nameshort_schema,
+        "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
     "additionalProperties": False
@@ -142,7 +333,7 @@ vim_account_new_schema = {
         # "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
         "vim_user": nameshort_schema,
-        "vim_password": nameshort_schema,
+        "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
     "required": ["name", "vim_url", "vim_type", "vim_user", "vim_password", "vim_tenant_name"],
@@ -203,7 +394,7 @@ sdn_port_mapping_schema = {
 }
 sdn_external_port_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
-    "title": "External port ingformation",
+    "title": "External port information",
     "type": "object",
     "properties": {
         "port": {"type": "string", "minLength": 1, "maxLength": 60},
@@ -213,15 +404,77 @@ sdn_external_port_schema = {
     "required": ["port"]
 }
 
+# USERS
+user_project_schema = {
+    "type": "array",
+    "minItems": 1,
+    "items": nameshort_schema,
+}
+user_new_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "New user schema",
+    "type": "object",
+    "properties": {
+        "username": nameshort_schema,
+        "password": passwd_schema,
+        "projects": user_project_schema,
+    },
+    "required": ["username", "password", "projects"],
+    "additionalProperties": False
+}
+user_edit_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "User edit schema for administrators",
+    "type": "object",
+    "properties": {
+        "password": passwd_schema,
+        "projects": {
+            "oneOff": [
+                user_project_schema,
+                array_edition_schema
+            ]
+        },
+    }
+}
+
+# PROJECTS
+project_new_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "New project schema for administrators",
+    "type": "object",
+    "properties": {
+        "name": nameshort_schema,
+        "admin": bool_schema,
+    },
+    "required": ["name"],
+    "additionalProperties": False
+}
+project_edit_schema = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "Project edit schema for administrators",
+    "type": "object",
+    "properties": {
+        "admin": bool_schema,
+    },
+    "additionalProperties": False,
+    "minProperties": 1
+}
+
+# GLOBAL SCHEMAS
 
 nbi_new_input_schemas = {
+    "users": user_new_schema,
+    "projects": project_new_schema,
     "vim_accounts": vim_account_new_schema,
     "sdns": sdn_new_schema,
     "ns_instantiate": ns_instantiate,
     "ns_action": ns_action,
+    "ns_scale": ns_scale
 }
 
 nbi_edit_input_schemas = {
+    "users": user_edit_schema,
+    "projects": project_edit_schema,
     "vim_accounts": vim_account_edit_schema,
     "sdns": sdn_edit_schema
 }
@@ -233,7 +486,7 @@ class ValidationError(Exception):
 
 def validate_input(indata, item, new=True):
     """
-    Validates input data agains json schema
+    Validates input data against json schema
     :param indata: user input data. Should be a dictionary
     :param item: can be users, projects, vims, sdns, ns_xxxxx
     :param new: True if the validation is for creating or False if it is for editing
@@ -252,4 +505,4 @@ def validate_input(indata, item, new=True):
             error_pos = "at '" + ":".join(map(str, e.path)) + "'"
         else:
             error_pos = ""
-        raise ValidationError("Format error {} '{}' ".format(error_pos, e))
+        raise ValidationError("Format error {} '{}' ".format(error_pos, e.message))

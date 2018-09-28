@@ -12,12 +12,12 @@ import logging
 from random import choice as random_choice
 from uuid import uuid4
 from hashlib import sha256, md5
-from osm_common.dbbase import DbException
+from osm_common.dbbase import DbException, deep_update
 from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from time import time
-from copy import deepcopy
+from copy import deepcopy, copy
 from validation import validate_input, ValidationError
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
@@ -30,27 +30,15 @@ class EngineException(Exception):
         Exception.__init__(self, message)
 
 
-def _deep_update(dict_to_change, dict_reference):
+def get_iterable(input):
     """
-    Modifies one dictionary with the information of the other following https://tools.ietf.org/html/rfc7396
-    :param dict_to_change:  Ends modified
-    :param dict_reference: reference
-    :return: none
+    Returns an iterable, in case input is None it just returns an empty tuple
+    :param input:
+    :return: iterable
     """
-    for k in dict_reference:
-        if dict_reference[k] is None:   # None->Anything
-            if k in dict_to_change:
-                del dict_to_change[k]
-        elif not isinstance(dict_reference[k], dict):  # NotDict->Anything
-            dict_to_change[k] = dict_reference[k]
-        elif k not in dict_to_change:  # Dict->Empty
-            dict_to_change[k] = deepcopy(dict_reference[k])
-            _deep_update(dict_to_change[k], dict_reference[k])
-        elif isinstance(dict_to_change[k], dict):  # Dict->Dict
-            _deep_update(dict_to_change[k], dict_reference[k])
-        else:       # Dict->NotDict
-            dict_to_change[k] = deepcopy(dict_reference[k])
-            _deep_update(dict_to_change[k], dict_reference[k])
+    if input is None:
+        return ()
+    return input
 
 
 class Engine(object):
@@ -243,20 +231,35 @@ class Engine(object):
                 clean_indata = clean_indata['userDefinedData']
         return clean_indata
 
-    def _check_dependencies_on_descriptor(self, session, item, descriptor_id):
+    def _check_project_dependencies(self, project_id):
+        """
+        Check if a project can be deleted
+        :param session:
+        :param _id:
+        :return:
+        """
+        # TODO Is it needed to check descriptors _admin.project_read/project_write??
+        _filter = {"projects": project_id}
+        if self.db.get_list("users", _filter):
+            raise EngineException("There are users that uses this project", http_code=HTTPStatus.CONFLICT)
+
+    def _check_dependencies_on_descriptor(self, session, item, descriptor_id, _id):
         """
         Check that the descriptor to be deleded is not a dependency of others
         :param session: client session information
         :param item: can be vnfds, nsds
-        :param descriptor_id: id of descriptor to be deleted
+        :param descriptor_id: id (provided by client) of descriptor to be deleted
+        :param _id: internal id of descriptor to be deleted
         :return: None or raises exception
         """
         if item == "vnfds":
             _filter = {"constituent-vnfd.ANYINDEX.vnfd-id-ref": descriptor_id}
             if self.get_item_list(session, "nsds", _filter):
                 raise EngineException("There are nsd that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
+            if self.get_item_list(session, "vnfrs", {"vnfd-id": _id}):
+                raise EngineException("There are vnfr that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
         elif item == "nsds":
-            _filter = {"nsdId": descriptor_id}
+            _filter = {"nsdId": _id}
             if self.get_item_list(session, "nsrs", _filter):
                 raise EngineException("There are nsr that depends on this NSD", http_code=HTTPStatus.CONFLICT)
 
@@ -284,22 +287,35 @@ class Engine(object):
                 raise EngineException("Descriptor error at nsdId='{}' references a non exist nsd".format(nsd_id),
                                       http_code=HTTPStatus.CONFLICT)
 
+    def _check_edition(self, session, item, indata, id, force=False):
+        if item == "users":
+            if indata.get("projects"):
+                if not session["admin"]:
+                    raise EngineException("Needed admin privileges to edit user projects", HTTPStatus.UNAUTHORIZED)
+            if indata.get("password"):
+                # regenerate salt and encrypt password
+                salt = uuid4().hex
+                indata["_admin"] = {"salt": salt}
+                indata["password"] = sha256(indata["password"].encode('utf-8') + salt.encode('utf-8')).hexdigest()
+
     def _validate_new_data(self, session, item, indata, id=None, force=False):
         if item == "users":
-            if not indata.get("username"):
-                raise EngineException("missing 'username'", HTTPStatus.UNPROCESSABLE_ENTITY)
-            if not indata.get("password"):
-                raise EngineException("missing 'password'", HTTPStatus.UNPROCESSABLE_ENTITY)
-            if not indata.get("projects"):
-                raise EngineException("missing 'projects'", HTTPStatus.UNPROCESSABLE_ENTITY)
             # check username not exists
-            if self.db.get_one(item, {"username": indata.get("username")}, fail_on_empty=False, fail_on_more=False):
+            if not id and self.db.get_one(item, {"username": indata.get("username")}, fail_on_empty=False,
+                                          fail_on_more=False):
                 raise EngineException("username '{}' exists".format(indata["username"]), HTTPStatus.CONFLICT)
+            # check projects
+            if not force:
+                for p in indata["projects"]:
+                    if p == "admin":
+                        continue
+                    if not self.db.get_one("projects", {"_id": p}, fail_on_empty=False, fail_on_more=False):
+                        raise EngineException("project '{}' does not exists".format(p), HTTPStatus.CONFLICT)
         elif item == "projects":
             if not indata.get("name"):
                 raise EngineException("missing 'name'")
             # check name not exists
-            if self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
+            if not id and self.db.get_one(item, {"name": indata.get("name")}, fail_on_empty=False, fail_on_more=False):
                 raise EngineException("name '{}' exists".format(indata["name"]), HTTPStatus.CONFLICT)
         elif item in ("vnfds", "nsds"):
             filter = {"id": indata["id"]}
@@ -342,16 +358,108 @@ class Engine(object):
         :param indata: descriptor with the parameters of the operation
         :return: None
         """
+        vnfds = {}
+        vim_accounts = []
+        nsd = nsr["nsd"]
+
+        def check_valid_vnf_member_index(member_vnf_index):
+            for vnf in nsd["constituent-vnfd"]:
+                if member_vnf_index == vnf["member-vnf-index"]:
+                    vnfd_id = vnf["vnfd-id-ref"]
+                    if vnfd_id not in vnfds:
+                        vnfds[vnfd_id] = self.db.get_one("vnfds", {"id": vnfd_id})
+                    return vnfds[vnfd_id]
+            else:
+                raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the "
+                                      "nsd:constituent-vnfd".format(member_vnf_index))
+
+        def check_valid_vim_account(vim_account):
+            if vim_account in vim_accounts:
+                return
+            try:
+                self.db.get_one("vim_accounts", {"_id": vim_account})
+            except Exception:
+                raise EngineException("Invalid vimAccountId='{}' not present".format(vim_account))
+            vim_accounts.append(vim_account)
+
         if operation == "action":
+            # check vnf_member_index
             if indata.get("vnf_member_index"):
                 indata["member_vnf_index"] = indata.pop("vnf_member_index")    # for backward compatibility
-            for vnf in nsr["nsd"]["constituent-vnfd"]:
-                if indata["member_vnf_index"] == vnf["member-vnf-index"]:
-                    # TODO get vnfd, check primitives
+            if not indata.get("member_vnf_index"):
+                raise EngineException("Missing 'member_vnf_index' parameter")
+            vnfd = check_valid_vnf_member_index(indata["member_vnf_index"])
+            # check primitive
+            for config_primitive in get_iterable(vnfd.get("vnf-configuration", {}).get("config-primitive")):
+                if indata["primitive"] == config_primitive["name"]:
+                    # check needed primitive_params are provided
+                    if indata.get("primitive_params"):
+                        in_primitive_params_copy = copy(indata["primitive_params"])
+                    else:
+                        in_primitive_params_copy = {}
+                    for paramd in get_iterable(config_primitive.get("parameter")):
+                        if paramd["name"] in in_primitive_params_copy:
+                            del in_primitive_params_copy[paramd["name"]]
+                        elif not paramd.get("default-value"):
+                            raise EngineException("Needed parameter {} not provided for primitive '{}'".format(
+                                paramd["name"], indata["primitive"]))
+                    # check no extra primitive params are provided
+                    if in_primitive_params_copy:
+                        raise EngineException("parameter/s '{}' not present at vnfd for primitive '{}'".format(
+                            list(in_primitive_params_copy.keys()), indata["primitive"]))
                     break
             else:
-                raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the nsd "
-                                      "constituent-vnfd".format(indata["member_vnf_index"]))
+                raise EngineException("Invalid primitive '{}' is not present at vnfd".format(indata["primitive"]))
+        if operation == "scale":
+            vnfd = check_valid_vnf_member_index(indata["scaleVnfData"]["scaleByStepData"]["member-vnf-index"])
+            for scaling_group in get_iterable(vnfd.get("scaling-group-descriptor")):
+                if indata["scaleVnfData"]["scaleByStepData"]["scaling-group-descriptor"] == scaling_group["name"]:
+                    break
+            else:
+                raise EngineException("Invalid scaleVnfData:scaleByStepData:scaling-group-descriptor '{}' is not "
+                                      "present at vnfd:scaling-group-descriptor".format(
+                                          indata["scaleVnfData"]["scaleByStepData"]["scaling-group-descriptor"]))
+        if operation == "instantiate":
+            # check vim_account
+            check_valid_vim_account(indata["vimAccountId"])
+            for in_vnf in get_iterable(indata.get("vnf")):
+                vnfd = check_valid_vnf_member_index(in_vnf["member-vnf-index"])
+                if in_vnf.get("vimAccountId"):
+                    check_valid_vim_account(in_vnf["vimAccountId"])
+                for in_vdu in get_iterable(in_vnf.get("vdu")):
+                    for vdud in get_iterable(vnfd.get("vdu")):
+                        if vdud["id"] == in_vdu["id"]:
+                            for volume in get_iterable(in_vdu.get("volume")):
+                                for volumed in get_iterable(vdud.get("volumes")):
+                                    if volumed["name"] == volume["name"]:
+                                        break
+                                else:
+                                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                          "volume:name='{}' is not present at vnfd:vdu:volumes list".
+                                                          format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                                 volume["name"]))
+                            break
+                    else:
+                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu:id='{}' is not "
+                                              "present at vnfd".format(in_vnf["member-vnf-index"], in_vdu["id"]))
+
+                for in_internal_vld in get_iterable(in_vnf.get("internal-vld")):
+                    for internal_vldd in get_iterable(vnfd.get("internal-vld")):
+                        if in_internal_vld["name"] == internal_vldd["name"] or \
+                                in_internal_vld["name"] == internal_vldd["id"]:
+                            break
+                    else:
+                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld:name='{}'"
+                                              " is not present at vnfd '{}'".format(in_vnf["member-vnf-index"],
+                                                                                    in_internal_vld["name"],
+                                                                                    vnfd["id"]))
+            for in_vld in get_iterable(indata.get("vld")):
+                for vldd in get_iterable(nsd.get("vld")):
+                    if in_vld["name"] == vldd["name"] or in_vld["name"] == vldd["id"]:
+                        break
+                else:
+                    raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
+                        in_vld["name"]))
 
     def _format_new_data(self, session, item, indata):
         now = time()
@@ -565,10 +673,11 @@ class Engine(object):
                 "orchestration-progress": {},
                 # {"networks": {"active": 0, "total": 0}, "vms": {"active": 0, "total": 0}},
 
-                "crete-time": now,
+                "create-time": now,
                 "nsd-name-ref": nsd["name"],
                 "operational-events": [],   # "id", "timestamp", "description", "event",
                 "nsd-ref": nsd["id"],
+                "nsdId": nsd["_id"],
                 "instantiate_params": ns_request,
                 "ns-instance-config-ref": nsr_id,
                 "id": nsr_id,
@@ -624,9 +733,11 @@ class Engine(object):
                     vdur = {
                         "id": vdur_id,
                         "vdu-id-ref": vdu["id"],
+                        # TODO      "name": ""     Name of the VDU in the VIM
                         "ip-address": None,  # mgmt-interface filled by LCM
                         # "vim-id", "flavor-id", "image-id", "management-ip" # filled by LCM
                         "internal-connection-point": [],
+                        "interfaces": [],
                     }
                     # TODO volumes: name, volume-id
                     for icp in vdu.get("internal-connection-point", ()):
@@ -638,6 +749,13 @@ class Engine(object):
                             # vim-id  # TODO it would be nice having a vim port id
                         }
                         vdur["internal-connection-point"].append(vdu_icp)
+                    for iface in vdu.get("interface", ()):
+                        vdu_iface = {
+                            "name": iface.get("name"),
+                            # "ip-address", "mac-address" # filled by LCM
+                            # vim-id  # TODO it would be nice having a vim port id
+                        }
+                        vdur["interfaces"].append(vdu_iface)
                     vnfr_descriptor["vdur"].append(vdur)
 
                 step = "creating vnfr vnfd-id='{}' constituent-vnfd='{}' at database".format(
@@ -705,6 +823,9 @@ class Engine(object):
         :return: _id: identity of the inserted data.
         """
 
+        if not session["admin"] and item in ("users", "projects"):
+            raise EngineException("Needed admin privileges to perform this operation", HTTPStatus.UNAUTHORIZED)
+
         try:
             item_envelop = item
             if item in ("nsds", "vnfds"):
@@ -713,7 +834,7 @@ class Engine(object):
 
             # Override descriptor with query string kwargs
             self._update_descriptor(content, kwargs)
-            if not indata and item not in ("nsds", "vnfds"):
+            if not content and item not in ("nsds", "vnfds"):
                 raise EngineException("Empty payload")
 
             validate_input(content, item, new=True)
@@ -722,7 +843,7 @@ class Engine(object):
                 # in this case the input descriptor is not the data to be stored
                 return self.new_nsr(rollback, session, ns_request=content)
 
-            self._validate_new_data(session, item_envelop, content, force)
+            self._validate_new_data(session, item_envelop, content, force=force)
             if item in ("nsds", "vnfds"):
                 content = {"_admin": {"userDefinedData": content}}
             self._format_new_data(session, item, content)
@@ -805,15 +926,15 @@ class Engine(object):
         #     raise EngineException("Cannot get ns_instance '{}': {}".format(e), HTTPStatus.NOT_FOUND)
 
     def _add_read_filter(self, session, item, filter):
-        if session["project_id"] == "admin":  # allows all
+        if session["admin"]:  # allows all
             return filter
         if item == "users":
             filter["username"] = session["username"]
-        elif item in ("vnfds", "nsds", "nsrs"):
+        elif item in ("vnfds", "nsds", "nsrs", "vnfrs"):
             filter["_admin.projects_read.cont"] = ["ANY", session["project_id"]]
 
     def _add_delete_filter(self, session, item, filter):
-        if session["project_id"] != "admin" and item in ("users", "projects"):
+        if not session["admin"] and item in ("users", "projects"):
             raise EngineException("Only admin users can perform this task", http_code=HTTPStatus.FORBIDDEN)
         if item == "users":
             if filter.get("_id") == session["username"] or filter.get("username") == session["username"]:
@@ -821,7 +942,7 @@ class Engine(object):
         elif item == "project":
             if filter.get("_id") == session["project_id"]:
                 raise EngineException("You cannot delete your own project", http_code=HTTPStatus.CONFLICT)
-        elif item in ("vnfds", "nsds") and session["project_id"] != "admin":
+        elif item in ("vnfds", "nsds") and not session["admin"]:
             filter["_admin.projects_write.cont"] = ["ANY", session["project_id"]]
 
     def get_file(self, session, item, _id, path=None, accept_header=None):
@@ -937,7 +1058,10 @@ class Engine(object):
             descriptor = self.get_item(session, item, _id)
             descriptor_id = descriptor.get("id")
             if descriptor_id:
-                self._check_dependencies_on_descriptor(session, item, descriptor_id)
+                self._check_dependencies_on_descriptor(session, item, descriptor_id, _id)
+        elif item == "projects":
+            if not force:
+                self._check_project_dependencies(_id)
 
         if item == "nsrs":
             nsr = self.db.get_one(item, filter)
@@ -1051,8 +1175,9 @@ class Engine(object):
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
 
-        _deep_update(content, indata)
-        self._validate_new_data(session, item, content, id, force)
+        self._check_edition(session, item, indata, id, force)
+        deep_update(content, indata)
+        self._validate_new_data(session, item, content, id=id, force=force)
         # self._format_new_data(session, item, content)
         self.db.replace(item, id, content)
         if item in ("vim_accounts", "sdns"):
@@ -1075,6 +1200,8 @@ class Engine(object):
         :param force: If True avoid some dependence checks
         :return: dictionary, raise exception if not found.
         """
+        if not session["admin"] and item == "projects":
+            raise EngineException("Needed admin privileges to perform this operation", HTTPStatus.UNAUTHORIZED)
 
         content = self.get_item(session, item, _id)
         return self._edit_item(session, item, _id, content, indata, kwargs, force)

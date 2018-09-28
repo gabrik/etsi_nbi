@@ -26,7 +26,8 @@ html_start = """
       <a href="/osm/admin/v1/users">USERs </a>
       <a href="/osm/admin/v1/projects">PROJECTs </a>
       <a href="/osm/admin/v1/tokens">TOKENs </a>
-      <a href="/osm/admin/v1/vims">VIMs </a>
+      <a href="/osm/admin/v1/vim_accounts">VIMs </a>
+      <a href="/osm/admin/v1/sdns">SDNs </a>
       <a href="/osm/admin/v1/tokens?METHOD=DELETE">logout </a>
     </div>
   </div>
@@ -91,7 +92,7 @@ html_upload_body = """
 
 html_nslcmop_body = """
 <a href="/osm/nslcm/v1/ns_lcm_op_occs?nsInstanceId={id}">nslcm operations </a>
-<a href="/osm/nslcm/v1/vnfrs?nsr-id-ref={id}">VNFRS </a>
+<a href="/osm/nslcm/v1/vnf_instances?nsr-id-ref={id}">VNFRS </a>
 <form action="/osm/nslcm/v1/ns_instances/{id}/terminate" method="post" enctype="multipart/form-data">
     <h3> <table style="border: 0;"> <tr>
         <td> <input type="submit" value="Terminate"/> </td>
