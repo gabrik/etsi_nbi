@@ -6,8 +6,8 @@ from setuptools import setup
 _name = "osm_nbi"
 # version is at first line of osm_nbi/html_public/version
 here = os.path.abspath(os.path.dirname(__file__))
-with open(os.path.join(here, 'osm_nbi/html_public/version')) as version_file:
-    VERSION = version_file.readline().strip()
+# with open(os.path.join(here, 'osm_nbi/html_public/version')) as version_file:
+#     VERSION = version_file.readline().strip()
 with open(os.path.join(here, 'README.rst')) as readme_file:
     README = readme_file.read()
 
@@ -15,7 +15,7 @@ setup(
     name=_name,
     description='OSM North Bound Interface',
     long_description=README,
-    version_command=('git describe --match v* --tags --long --dirty', 'pep440-git'),
+    version_command=('git describe --match v* --tags --long --dirty', 'pep440-git-full'),
     # version=VERSION,
     # python_requires='>3.5.0',
     author='ETSI OSM',
