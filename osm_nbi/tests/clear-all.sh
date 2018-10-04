@@ -10,6 +10,7 @@ function usage(){
     echo -e "  OPTIONS"
     echo -e "     -h --help:   show this help"
     echo -e "     -f --force:  Do not ask for confirmation"
+    echo -e "     --completely:  It cleans also user admin. NBI will need to be restarted to init database"
     echo -e "     --clean-RO:  clean RO content. RO client (openmano) must be installed and configured"
     echo -e "     --clean-VCA: clean VCA content. juju  must be installed and configured"
     echo -e "  ENV variable 'OSMNBI_URL' is used for the URL of the NBI server. If missing, it uses" \
@@ -38,6 +39,7 @@ do
     shift
     ( [ "$option" == -h ] || [ "$option" == --help ] ) && usage && exit
     ( [ "$option" == -f ] || [ "$option" == --force ] ) && OSMNBI_CLEAN_FORCE=yes && continue
+    [ "$option" == --completely ] && OSMNBI_COMPLETELY=yes && continue
     [ "$option" == --clean-RO ] && OSMNBI_CLEAN_RO=yes && continue
     [ "$option" == --clean-VCA ] && OSMNBI_CLEAN_VCA=yes && continue
     echo "Unknown option '$option'. Type $0 --help" 2>&1 && exit 1
@@ -64,13 +66,18 @@ then
     done
 fi
 
-for item in vim_accounts vims sdns nsrs vnfrs nslcmops nsds vnfds projects
+for item in vim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects # vims
 do
     curl --insecure ${OSMNBI_URL}/test/db-clear/${item}
     echo " ${item}"
 done
-# delete all users except admin
-curl --insecure ${OSMNBI_URL}/test/db-clear/users?username.ne=admin
+if [ -n "$OSMNBI_COMPLETELY" ] ; then
+    curl --insecure ${OSMNBI_URL}/test/db-clear/users && echo " ${item}"
+    curl --insecure ${OSMNBI_URL}/test/db-clear/version && echo " ${item}"
+else
+    # delete all users except admin
+    curl --insecure ${OSMNBI_URL}/test/db-clear/users?username.ne=admin
+fi
 
 if [ -n "$OSMNBI_CLEAN_RO" ]
 then

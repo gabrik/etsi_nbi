@@ -20,9 +20,9 @@ html_start = """
       <a href="https://osm.etsi.org"> <img src="/osm/static/OSM-logo.png" height="42" width="100"
         style="vertical-align:middle"> </a>
       <a>( {} )</a>
-      <a href="/osm/vnfpkgm/v1/vnf_packages_content">VNFDs </a>
-      <a href="/osm/nsd/v1/ns_descriptors_content">NSDs </a>
-      <a href="/osm/nslcm/v1/ns_instances_content">NSs </a>
+      <a href="/osm/vnfpkgm/v1/vnf_packages">VNFDs </a>
+      <a href="/osm/nsd/v1/ns_descriptors">NSDs </a>
+      <a href="/osm/nslcm/v1/ns_instances">NSs </a>
       <a href="/osm/admin/v1/users">USERs </a>
       <a href="/osm/admin/v1/projects">PROJECTs </a>
       <a href="/osm/admin/v1/tokens">TOKENs </a>
@@ -120,10 +120,10 @@ def format(data, request, response, session):
     if response.status and response.status > 202:
         body += html_body_error.format(yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False))
     elif isinstance(data, (list, tuple)):
-        if request.path_info == "/vnfpkgm/v1/vnf_packages_content":
+        if request.path_info == "/vnfpkgm/v1/vnf_packages":
             body += html_upload_body.format(request.path_info, "VNFD")
-        elif request.path_info == "/nsd/v1/ns_descriptors_content":
-            body += html_upload_body.format(request.path_info, "NSD")
+        elif request.path_info == "/nsd/v1/ns_descriptors":
+            body += html_upload_body.format(request.path_info + "_content", "NSD")
         for k in data:
             if isinstance(k, dict):
                 data_id = k.pop("_id", None)

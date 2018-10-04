@@ -188,6 +188,8 @@ ns_instantiate = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
+        "lcmOperationType": string_schema,
+        "nsInstanceId": id_schema,
         "nsName": name_schema,
         "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
@@ -258,6 +260,8 @@ ns_action = {   # TODO for the moment it is only contemplated the vnfd primitive
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
+        "lcmOperationType": string_schema,
+        "nsInstanceId": id_schema,
         "member_vnf_index": name_schema,
         "vnf_member_index": name_schema,  # TODO for backward compatibility. To remove in future
         "vdu_id": name_schema,
@@ -272,6 +276,8 @@ ns_scale = {   # TODO for the moment it is only VDU-scaling
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
+        "lcmOperationType": string_schema,
+        "nsInstanceId": id_schema,
         "scaleType": {"enum": ["SCALE_VNF"]},
         "scaleVnfData": {
             "type": "object",
@@ -555,19 +561,14 @@ class ValidationError(Exception):
     pass
 
 
-def validate_input(indata, item, new=True):
+def validate_input(indata, schema_to_use):
     """
     Validates input data against json schema
     :param indata: user input data. Should be a dictionary
-    :param item: can be users, projects, vims, sdns, ns_xxxxx
-    :param new: True if the validation is for creating or False if it is for editing
-    :return: None if ok, raises ValidationError exception otherwise
+    :param schema_to_use: jsonschema to test
+    :return: None if ok, raises ValidationError exception on error
     """
     try:
-        if new:
-            schema_to_use = nbi_new_input_schemas.get(item)
-        else:
-            schema_to_use = nbi_edit_input_schemas.get(item)
         if schema_to_use:
             js_v(indata, schema_to_use)
         return None
