@@ -9,18 +9,21 @@ list inside the projects that they are inserted
 __author__ = "Eduardo Sousa <esousa@whitestack.com>"
 __date__ = "$27-jul-2018 23:59:59$"
 
+import cherrypy
 import logging
 from base64 import standard_b64decode
 from copy import deepcopy
 from functools import reduce
+from hashlib import sha256
 from http import HTTPStatus
+from random import choice as random_choice
 from time import time
-
-import cherrypy
 
 from authconn import AuthException
 from authconn_keystone import AuthconnKeystone
-from engine import EngineException
+from osm_common import dbmongo
+from osm_common import dbmemory
+from osm_common.dbbase import DbException
 
 
 class Authenticator:
@@ -31,19 +34,11 @@ class Authenticator:
     RBAC model to manage permissions on operations.
     """
 
-    def __init__(self, engine):
+    def __init__(self):
         """
         Authenticator initializer. Setup the initial state of the object,
         while it waits for the config dictionary and database initialization.
-
-        Note: engine is only here until all the calls can to it can be replaced.
-
-        :param engine: reference to engine object used.
         """
-        super().__init__()
-
-        self.engine = engine
-
         self.backend = None
         self.config = None
         self.db = None
@@ -67,13 +62,27 @@ class Authenticator:
                 elif config["authentication"]["backend"] == "internal":
                     pass
                 else:
-                    raise Exception("No authentication backend defined")
+                    raise AuthException("Unknown authentication backend: {}"
+                                        .format(config["authentication"]["backend"]))
             if not self.db:
-                pass
-                # TODO: Implement database initialization
-                # NOTE: Database needed to store the mappings
+                if config["database"]["driver"] == "mongo":
+                    self.db = dbmongo.DbMongo()
+                    self.db.db_connect(config["database"])
+                elif config["database"]["driver"] == "memory":
+                    self.db = dbmemory.DbMemory()
+                    self.db.db_connect(config["database"])
+                else:
+                    raise AuthException("Invalid configuration param '{}' at '[database]':'driver'"
+                                        .format(config["database"]["driver"]))
         except Exception as e:
             raise AuthException(str(e))
+
+    def stop(self):
+        try:
+            if self.db:
+                self.db.db_disconnect()
+        except DbException as e:
+            raise AuthException(str(e), http_code=e.http_code)
 
     def init_db(self, target_version='1.0'):
         """
@@ -116,7 +125,7 @@ class Authenticator:
                     token = outdata["id"]
                     cherrypy.session['Authorization'] = token
             if self.config["authentication"]["backend"] == "internal":
-                return self.engine.authorize(token)
+                return self._internal_authorize(token)
             else:
                 try:
                     self.backend.validate_token(token)
@@ -124,7 +133,7 @@ class Authenticator:
                 except AuthException:
                     self.del_token(token)
                     raise
-        except EngineException as e:
+        except AuthException as e:
             if cherrypy.session.get('Authorization'):
                 del cherrypy.session['Authorization']
             cherrypy.response.headers["WWW-Authenticate"] = 'Bearer realm="{}"'.format(e)
@@ -132,7 +141,7 @@ class Authenticator:
 
     def new_token(self, session, indata, remote):
         if self.config["authentication"]["backend"] == "internal":
-            return self.engine.new_token(session, indata, remote)
+            return self._internal_new_token(session, indata, remote)
         else:
             if indata.get("username"):
                 token, projects = self.backend.authenticate_with_user_password(
@@ -163,7 +172,7 @@ class Authenticator:
                 "_id": token,
                 "id": token,
                 "issued_at": now,
-                "expires": now+3600,
+                "expires": now + 3600,
                 "project_id": project_id,
                 "username": indata.get("username") if not session else session.get("username"),
                 "remote_port": remote.port,
@@ -181,29 +190,122 @@ class Authenticator:
 
     def get_token_list(self, session):
         if self.config["authentication"]["backend"] == "internal":
-            return self.engine.get_token_list(session)
+            return self._internal_get_token_list(session)
         else:
             return [deepcopy(token) for token in self.tokens.values()
                     if token["username"] == session["username"]]
 
     def get_token(self, session, token):
         if self.config["authentication"]["backend"] == "internal":
-            return self.engine.get_token(session, token)
+            return self._internal_get_token(session, token)
         else:
             token_value = self.tokens.get(token)
             if not token_value:
-                raise EngineException("token not found", http_code=HTTPStatus.NOT_FOUND)
+                raise AuthException("token not found", http_code=HTTPStatus.NOT_FOUND)
             if token_value["username"] != session["username"] and not session["admin"]:
-                raise EngineException("needed admin privileges", http_code=HTTPStatus.UNAUTHORIZED)
+                raise AuthException("needed admin privileges", http_code=HTTPStatus.UNAUTHORIZED)
             return token_value
 
     def del_token(self, token):
         if self.config["authentication"]["backend"] == "internal":
-            return self.engine.del_token(token)
+            return self._internal_del_token(token)
         else:
             try:
                 self.backend.revoke_token(token)
                 del self.tokens[token]
                 return "token '{}' deleted".format(token)
             except KeyError:
-                raise EngineException("Token '{}' not found".format(token), http_code=HTTPStatus.NOT_FOUND)
+                raise AuthException("Token '{}' not found".format(token), http_code=HTTPStatus.NOT_FOUND)
+
+    def _internal_authorize(self, token):
+        try:
+            if not token:
+                raise AuthException("Needed a token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
+            if token not in self.tokens:
+                raise AuthException("Invalid token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
+            session = self.tokens[token]
+            now = time()
+            if session["expires"] < now:
+                del self.tokens[token]
+                raise AuthException("Expired Token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
+            return session
+        except AuthException:
+            if self.config["global"].get("test.user_not_authorized"):
+                return {"id": "fake-token-id-for-test",
+                        "project_id": self.config["global"].get("test.project_not_authorized", "admin"),
+                        "username": self.config["global"]["test.user_not_authorized"]}
+            else:
+                raise
+
+    def _internal_new_token(self, session, indata, remote):
+        now = time()
+        user_content = None
+
+        # Try using username/password
+        if indata.get("username"):
+            user_rows = self.db.get_list("users", {"username": indata.get("username")})
+            user_content = None
+            if user_rows:
+                user_content = user_rows[0]
+                salt = user_content["_admin"]["salt"]
+                shadow_password = sha256(indata.get("password", "").encode('utf-8') + salt.encode('utf-8')).hexdigest()
+                if shadow_password != user_content["password"]:
+                    user_content = None
+            if not user_content:
+                raise AuthException("Invalid username/password", http_code=HTTPStatus.UNAUTHORIZED)
+        elif session:
+            user_rows = self.db.get_list("users", {"username": session["username"]})
+            if user_rows:
+                user_content = user_rows[0]
+            else:
+                raise AuthException("Invalid token", http_code=HTTPStatus.UNAUTHORIZED)
+        else:
+            raise AuthException("Provide credentials: username/password or Authorization Bearer token",
+                                http_code=HTTPStatus.UNAUTHORIZED)
+
+        token_id = ''.join(random_choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+                           for _ in range(0, 32))
+        if indata.get("project_id"):
+            project_id = indata.get("project_id")
+            if project_id not in user_content["projects"]:
+                raise AuthException("project {} not allowed for this user"
+                                    .format(project_id), http_code=HTTPStatus.UNAUTHORIZED)
+        else:
+            project_id = user_content["projects"][0]
+        if project_id == "admin":
+            session_admin = True
+        else:
+            project = self.db.get_one("projects", {"_id": project_id})
+            session_admin = project.get("admin", False)
+        new_session = {"issued_at": now, "expires": now + 3600,
+                       "_id": token_id, "id": token_id, "project_id": project_id, "username": user_content["username"],
+                       "remote_port": remote.port, "admin": session_admin}
+        if remote.name:
+            new_session["remote_host"] = remote.name
+        elif remote.ip:
+            new_session["remote_host"] = remote.ip
+
+        self.tokens[token_id] = new_session
+        return deepcopy(new_session)
+
+    def _internal_get_token_list(self, session):
+        token_list = []
+        for token_id, token_value in self.tokens.items():
+            if token_value["username"] == session["username"]:
+                token_list.append(deepcopy(token_value))
+        return token_list
+
+    def _internal_get_token(self, session, token_id):
+        token_value = self.tokens.get(token_id)
+        if not token_value:
+            raise AuthException("token not found", http_code=HTTPStatus.NOT_FOUND)
+        if token_value["username"] != session["username"] and not session["admin"]:
+            raise AuthException("needed admin privileges", http_code=HTTPStatus.UNAUTHORIZED)
+        return token_value
+
+    def _internal_del_token(self, token_id):
+        try:
+            del self.tokens[token_id]
+            return "token '{}' deleted".format(token_id)
+        except KeyError:
+            raise AuthException("Token '{}' not found".format(token_id), http_code=HTTPStatus.NOT_FOUND)

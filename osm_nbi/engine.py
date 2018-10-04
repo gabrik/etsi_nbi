@@ -9,7 +9,6 @@ import tarfile
 import yaml
 import json
 import logging
-from random import choice as random_choice
 from uuid import uuid4
 from hashlib import sha256, md5
 from osm_common.dbbase import DbException, deep_update
@@ -17,7 +16,7 @@ from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from time import time
-from copy import deepcopy, copy
+from copy import copy
 from validation import validate_input, ValidationError
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
@@ -99,102 +98,6 @@ class Engine(object):
                 self.fs.fs_disconnect()
         except (DbException, FsException, MsgException) as e:
             raise EngineException(str(e), http_code=e.http_code)
-
-    def authorize(self, token):
-        try:
-            if not token:
-                raise EngineException("Needed a token or Authorization http header",
-                                      http_code=HTTPStatus.UNAUTHORIZED)
-            if token not in self.tokens:
-                raise EngineException("Invalid token or Authorization http header",
-                                      http_code=HTTPStatus.UNAUTHORIZED)
-            session = self.tokens[token]
-            now = time()
-            if session["expires"] < now:
-                del self.tokens[token]
-                raise EngineException("Expired Token or Authorization http header",
-                                      http_code=HTTPStatus.UNAUTHORIZED)
-            return session
-        except EngineException:
-            if self.config["global"].get("test.user_not_authorized"):
-                return {"id": "fake-token-id-for-test",
-                        "project_id": self.config["global"].get("test.project_not_authorized", "admin"),
-                        "username": self.config["global"]["test.user_not_authorized"]}
-            else:
-                raise
-
-    def new_token(self, session, indata, remote):
-        now = time()
-        user_content = None
-
-        # Try using username/password
-        if indata.get("username"):
-            user_rows = self.db.get_list("users", {"username": indata.get("username")})
-            user_content = None
-            if user_rows:
-                user_content = user_rows[0]
-                salt = user_content["_admin"]["salt"]
-                shadow_password = sha256(indata.get("password", "").encode('utf-8') + salt.encode('utf-8')).hexdigest()
-                if shadow_password != user_content["password"]:
-                    user_content = None
-            if not user_content:
-                raise EngineException("Invalid username/password", http_code=HTTPStatus.UNAUTHORIZED)
-        elif session:
-            user_rows = self.db.get_list("users", {"username": session["username"]})
-            if user_rows:
-                user_content = user_rows[0]
-            else:
-                raise EngineException("Invalid token", http_code=HTTPStatus.UNAUTHORIZED)
-        else:
-            raise EngineException("Provide credentials: username/password or Authorization Bearer token",
-                                  http_code=HTTPStatus.UNAUTHORIZED)
-
-        token_id = ''.join(random_choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-                           for _ in range(0, 32))
-        if indata.get("project_id"):
-            project_id = indata.get("project_id")
-            if project_id not in user_content["projects"]:
-                raise EngineException("project {} not allowed for this user".format(project_id),
-                                      http_code=HTTPStatus.UNAUTHORIZED)
-        else:
-            project_id = user_content["projects"][0]
-        if project_id == "admin":
-            session_admin = True
-        else:
-            project = self.db.get_one("projects", {"_id": project_id})
-            session_admin = project.get("admin", False)
-        new_session = {"issued_at": now, "expires": now+3600,
-                       "_id": token_id, "id": token_id, "project_id": project_id, "username": user_content["username"],
-                       "remote_port": remote.port, "admin": session_admin}
-        if remote.name:
-            new_session["remote_host"] = remote.name
-        elif remote.ip:
-            new_session["remote_host"] = remote.ip
-
-        self.tokens[token_id] = new_session
-        return deepcopy(new_session)
-
-    def get_token_list(self, session):
-        token_list = []
-        for token_id, token_value in self.tokens.items():
-            if token_value["username"] == session["username"]:
-                token_list.append(deepcopy(token_value))
-        return token_list
-
-    def get_token(self, session, token_id):
-        token_value = self.tokens.get(token_id)
-        if not token_value:
-            raise EngineException("token not found", http_code=HTTPStatus.NOT_FOUND)
-        if token_value["username"] != session["username"] and not session["admin"]:
-            raise EngineException("needed admin privileges", http_code=HTTPStatus.UNAUTHORIZED)
-        return token_value
-
-    def del_token(self, token_id):
-        try:
-            del self.tokens[token_id]
-            return "token '{}' deleted".format(token_id)
-        except KeyError:
-            raise EngineException("Token '{}' not found".format(token_id), http_code=HTTPStatus.NOT_FOUND)
 
     @staticmethod
     def _remove_envelop(item, indata=None):

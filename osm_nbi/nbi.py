@@ -148,7 +148,7 @@ class Server(object):
     def __init__(self):
         self.instance += 1
         self.engine = Engine()
-        self.authenticator = Authenticator(self.engine)
+        self.authenticator = Authenticator()
         self.valid_methods = {   # contains allowed URL and methods
             "admin": {
                 "v1": {
