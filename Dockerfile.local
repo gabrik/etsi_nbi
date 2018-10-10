@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y git python3 python3-jsonschema \
 
 # OSM_COMMON
 RUN git clone https://osm.etsi.org/gerrit/osm/common.git \
-    && cd common  && python3 setup.py develop && cd ..
+    && pip3 install -e common
+#    && cd common  && python3 setup.py develop && cd ..
 #    && pip3 install -U -r requirements.txt \
 #    && cd ..
 
