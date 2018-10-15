@@ -10,11 +10,13 @@ import logging
 import logging.handlers
 import getopt
 import sys
+
+from authconn import AuthException
+from auth import Authenticator
 from engine import Engine, EngineException
 from osm_common.dbbase import DbException
 from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
-from base64 import standard_b64decode
 from http import HTTPStatus
 from codecs import getreader
 from os import environ, path
@@ -25,6 +27,7 @@ __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.1.3"
 version_date = "Apr 2018"
 database_version = '1.0'
+auth_database_version = '1.0'
 
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
@@ -72,6 +75,9 @@ URL: /osm                                                       GET     POST    
                 /<vnfInstanceId>                                O
             /subscriptions                                      5       5
                 /<subscriptionId>                               5                       X
+        /pdu/v1
+            /pdu_descriptor                                     O       O
+                /<id>                                           O               O       O       O
         /admin/v1
             /tokens                                             O       O
                 /<id>                                           O                       O
@@ -145,6 +151,7 @@ class Server(object):
     def __init__(self):
         self.instance += 1
         self.engine = Engine()
+        self.authenticator = Authenticator()
         self.valid_methods = {   # contains allowed URL and methods
             "admin": {
                 "v1": {
@@ -166,6 +173,13 @@ class Server(object):
                     "sdns": {"METHODS": ("GET", "POST"),
                              "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                              },
+                }
+            },
+            "pdu": {
+                "v1": {
+                    "pdu_descriptors": {"METHODS": ("GET", "POST"),
+                                        "<ID>": {"METHODS": ("GET", "POST", "DELETE", "PATCH", "PUT")}
+                                        },
                 }
             },
             "nsd": {
@@ -234,48 +248,6 @@ class Server(object):
                 }
             },
         }
-
-    def _authorization(self):
-        token = None
-        user_passwd64 = None
-        try:
-            # 1. Get token Authorization bearer
-            auth = cherrypy.request.headers.get("Authorization")
-            if auth:
-                auth_list = auth.split(" ")
-                if auth_list[0].lower() == "bearer":
-                    token = auth_list[-1]
-                elif auth_list[0].lower() == "basic":
-                    user_passwd64 = auth_list[-1]
-            if not token:
-                if cherrypy.session.get("Authorization"):
-                    # 2. Try using session before request a new token. If not, basic authentication will generate
-                    token = cherrypy.session.get("Authorization")
-                    if token == "logout":
-                        token = None   # force Unauthorized response to insert user pasword again
-                elif user_passwd64 and cherrypy.request.config.get("auth.allow_basic_authentication"):
-                    # 3. Get new token from user password
-                    user = None
-                    passwd = None
-                    try:
-                        user_passwd = standard_b64decode(user_passwd64).decode()
-                        user, _, passwd = user_passwd.partition(":")
-                    except Exception:
-                        pass
-                    outdata = self.engine.new_token(None, {"username": user, "password": passwd})
-                    token = outdata["id"]
-                    cherrypy.session['Authorization'] = token
-            # 4. Get token from cookie
-            # if not token:
-            #     auth_cookie = cherrypy.request.cookie.get("Authorization")
-            #     if auth_cookie:
-            #         token = auth_cookie.value
-            return self.engine.authorize(token)
-        except EngineException as e:
-            if cherrypy.session.get('Authorization'):
-                del cherrypy.session['Authorization']
-            cherrypy.response.headers["WWW-Authenticate"] = 'Bearer realm="{}"'.format(e)
-            raise
 
     def _format_in(self, kwargs):
         try:
@@ -403,7 +375,7 @@ class Server(object):
         session = None
         try:
             if cherrypy.request.method == "GET":
-                session = self._authorization()
+                session = self.authenticator.authorize()
                 outdata = "Index page"
             else:
                 raise cherrypy.HTTPError(HTTPStatus.METHOD_NOT_ALLOWED.value,
@@ -411,7 +383,7 @@ class Server(object):
 
             return self._format_out(outdata, session)
 
-        except EngineException as e:
+        except (EngineException, AuthException) as e:
             cherrypy.log("index Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             return self._format_out("Welcome to OSM!", session)
@@ -444,19 +416,19 @@ class Server(object):
             raise NbiException("Expected application/yaml or application/json Content-Type", HTTPStatus.BAD_REQUEST)
         try:
             if method == "GET":
-                session = self._authorization()
+                session = self.authenticator.authorize()
                 if token_id:
-                    outdata = self.engine.get_token(session, token_id)
+                    outdata = self.authenticator.get_token(session, token_id)
                 else:
-                    outdata = self.engine.get_token_list(session)
+                    outdata = self.authenticator.get_token_list(session)
             elif method == "POST":
                 try:
-                    session = self._authorization()
+                    session = self.authenticator.authorize()
                 except Exception:
                     session = None
                 if kwargs:
                     indata.update(kwargs)
-                outdata = self.engine.new_token(session, indata, cherrypy.request.remote)
+                outdata = self.authenticator.new_token(session, indata, cherrypy.request.remote)
                 session = outdata
                 cherrypy.session['Authorization'] = outdata["_id"]
                 self._set_location_header("admin", "v1", "tokens", outdata["_id"])
@@ -466,9 +438,9 @@ class Server(object):
                 if not token_id and "id" in kwargs:
                     token_id = kwargs["id"]
                 elif not token_id:
-                    session = self._authorization()
+                    session = self.authenticator.authorize()
                     token_id = session["_id"]
-                outdata = self.engine.del_token(token_id)
+                outdata = self.authenticator.del_token(token_id)
                 session = None
                 cherrypy.session['Authorization'] = "logout"
                 # cherrypy.response.cookie["Authorization"] = token_id
@@ -476,7 +448,7 @@ class Server(object):
             else:
                 raise NbiException("Method {} not allowed for token".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session)
-        except (NbiException, EngineException, DbException) as e:
+        except (NbiException, EngineException, DbException, AuthException) as e:
             cherrypy.log("tokens Exception {}".format(e))
             cherrypy.response.status = e.http_code.value
             problem_details = {
@@ -511,7 +483,7 @@ class Server(object):
             return f
 
         elif len(args) == 2 and args[0] == "db-clear":
-            return self.engine.del_item_list({"project_id": "admin", "admin": True}, args[1], kwargs)
+            return self.engine.db.del_list(args[1], kwargs)
         elif args and args[0] == "prune":
             return self.engine.prune()
         elif args and args[0] == "login":
@@ -534,17 +506,17 @@ class Server(object):
             time.sleep(sleep_time)
             # thread_info
         elif len(args) >= 2 and args[0] == "message":
-            topic = args[1]
-            return_text = "<html><pre>{} ->\n".format(topic)
+            main_topic = args[1]
+            return_text = "<html><pre>{} ->\n".format(main_topic)
             try:
                 if cherrypy.request.method == 'POST':
                     to_send = yaml.load(cherrypy.request.body)
                     for k, v in to_send.items():
-                        self.engine.msg.write(topic, k, v)
+                        self.engine.msg.write(main_topic, k, v)
                         return_text += "  {}: {}\n".format(k, v)
                 elif cherrypy.request.method == 'GET':
                     for k, v in kwargs.items():
-                        self.engine.msg.write(topic, k, yaml.load(v))
+                        self.engine.msg.write(main_topic, k, yaml.load(v))
                         return_text += "  {}: {}\n".format(k, yaml.load(v))
             except Exception as e:
                 return_text += "Error: " + str(e)
@@ -573,7 +545,7 @@ class Server(object):
 
     def _check_valid_url_method(self, method, *args):
         if len(args) < 3:
-            raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
+            raise NbiException("URL must contain at least 'main_topic/version/topic'", HTTPStatus.METHOD_NOT_ALLOWED)
 
         reference = self.valid_methods
         for arg in args:
@@ -599,33 +571,35 @@ class Server(object):
         return
 
     @staticmethod
-    def _set_location_header(topic, version, item, id):
+    def _set_location_header(main_topic, version, topic, id):
         """
         Insert response header Location with the URL of created item base on URL params
-        :param topic:
+        :param main_topic:
         :param version:
-        :param item:
+        :param topic:
         :param id:
         :return: None
         """
         # Use cherrypy.request.base for absoluted path and make use of request.header HOST just in case behind aNAT
-        cherrypy.response.headers["Location"] = "/osm/{}/{}/{}/{}".format(topic, version, item, id)
+        cherrypy.response.headers["Location"] = "/osm/{}/{}/{}/{}".format(main_topic, version, topic, id)
         return
 
     @cherrypy.expose
-    def default(self, topic=None, version=None, item=None, _id=None, item2=None, *args, **kwargs):
+    def default(self, main_topic=None, version=None, topic=None, _id=None, item=None, *args, **kwargs):
         session = None
         outdata = None
         _format = None
         method = "DONE"
-        engine_item = None
+        engine_topic = None
         rollback = []
         session = None
         try:
-            if not topic or not version or not item:
-                raise NbiException("URL must contain at least 'topic/version/item'", HTTPStatus.METHOD_NOT_ALLOWED)
-            if topic not in ("admin", "vnfpkgm", "nsd", "nslcm"):
-                raise NbiException("URL topic '{}' not supported".format(topic), HTTPStatus.METHOD_NOT_ALLOWED)
+            if not main_topic or not version or not topic:
+                raise NbiException("URL must contain at least 'main_topic/version/topic'",
+                                   HTTPStatus.METHOD_NOT_ALLOWED)
+            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm"):
+                raise NbiException("URL main_topic '{}' not supported".format(main_topic),
+                                   HTTPStatus.METHOD_NOT_ALLOWED)
             if version != 'v1':
                 raise NbiException("URL version '{}' not supported".format(version), HTTPStatus.METHOD_NOT_ALLOWED)
 
@@ -638,95 +612,107 @@ class Server(object):
             else:
                 force = False
 
-            self._check_valid_url_method(method, topic, version, item, _id, item2, *args)
+            self._check_valid_url_method(method, main_topic, version, topic, _id, item, *args)
 
-            if topic == "admin" and item == "tokens":
+            if main_topic == "admin" and topic == "tokens":
                 return self.token(method, _id, kwargs)
 
             # self.engine.load_dbase(cherrypy.request.app.config)
-            session = self._authorization()
+            session = self.authenticator.authorize()
             indata = self._format_in(kwargs)
-            engine_item = item
-            if item == "subscriptions":
-                engine_item = topic + "_" + item
-            if item2:
-                engine_item = item2
+            engine_topic = topic
+            if topic == "subscriptions":
+                engine_topic = main_topic + "_" + topic
+            if item:
+                engine_topic = item
 
-            if topic == "nsd":
-                engine_item = "nsds"
-            elif topic == "vnfpkgm":
-                engine_item = "vnfds"
-            elif topic == "nslcm":
-                engine_item = "nsrs"
-                if item == "ns_lcm_op_occs":
-                    engine_item = "nslcmops"
-                if item == "vnfrs" or item == "vnf_instances":
-                    engine_item = "vnfrs"
-            if engine_item == "vims":   # TODO this is for backward compatibility, it will remove in the future
-                engine_item = "vim_accounts"
+            if main_topic == "nsd":
+                engine_topic = "nsds"
+            elif main_topic == "vnfpkgm":
+                engine_topic = "vnfds"
+            elif main_topic == "nslcm":
+                engine_topic = "nsrs"
+                if topic == "ns_lcm_op_occs":
+                    engine_topic = "nslcmops"
+                if topic == "vnfrs" or topic == "vnf_instances":
+                    engine_topic = "vnfrs"
+            elif main_topic == "pdu":
+                engine_topic = "pdus"
+            if engine_topic == "vims":   # TODO this is for backward compatibility, it will remove in the future
+                engine_topic = "vim_accounts"
 
             if method == "GET":
-                if item2 in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
-                    if item2 in ("vnfd", "nsd"):
+                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
+                    if item in ("vnfd", "nsd"):
                         path = "$DESCRIPTOR"
                     elif args:
                         path = args
-                    elif item2 == "artifacts":
+                    elif item == "artifacts":
                         path = ()
                     else:
                         path = None
-                    file, _format = self.engine.get_file(session, engine_item, _id, path,
+                    file, _format = self.engine.get_file(session, engine_topic, _id, path,
                                                          cherrypy.request.headers.get("Accept"))
                     outdata = file
                 elif not _id:
-                    outdata = self.engine.get_item_list(session, engine_item, kwargs)
+                    outdata = self.engine.get_item_list(session, engine_topic, kwargs)
                 else:
-                    outdata = self.engine.get_item(session, engine_item, _id)
+                    outdata = self.engine.get_item(session, engine_topic, _id)
             elif method == "POST":
-                if item in ("ns_descriptors_content", "vnf_packages_content"):
+                if topic in ("ns_descriptors_content", "vnf_packages_content"):
                     _id = cherrypy.request.headers.get("Transaction-Id")
                     if not _id:
-                        _id = self.engine.new_item(rollback, session, engine_item, {}, None, cherrypy.request.headers,
+                        _id = self.engine.new_item(rollback, session, engine_topic, {}, None, cherrypy.request.headers,
                                                    force=force)
-                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
-                                                           cherrypy.request.headers)
+                    completed = self.engine.upload_content(session, engine_topic, _id, indata, kwargs,
+                                                           cherrypy.request.headers, force=force)
                     if completed:
-                        self._set_location_header(topic, version, item, _id)
+                        self._set_location_header(main_topic, version, topic, _id)
                     else:
                         cherrypy.response.headers["Transaction-Id"] = _id
                     outdata = {"id": _id}
-                elif item == "ns_instances_content":
-                    _id = self.engine.new_item(rollback, session, engine_item, indata, kwargs, force=force)
-                    self.engine.ns_operation(rollback, session, _id, "instantiate", indata, None)
-                    self._set_location_header(topic, version, item, _id)
+                elif topic == "ns_instances_content":
+                    # creates NSR
+                    _id = self.engine.new_item(rollback, session, engine_topic, indata, kwargs, force=force)
+                    # creates nslcmop
+                    indata["lcmOperationType"] = "instantiate"
+                    indata["nsInstanceId"] = _id
+                    self.engine.new_item(rollback, session, "nslcmops", indata, None)
+                    self._set_location_header(main_topic, version, topic, _id)
                     outdata = {"id": _id}
-                elif item == "ns_instances" and item2:
-                    _id = self.engine.ns_operation(rollback, session, _id, item2, indata, kwargs)
-                    self._set_location_header(topic, version, "ns_lcm_op_occs", _id)
+                elif topic == "ns_instances" and item:
+                    indata["lcmOperationType"] = item
+                    indata["nsInstanceId"] = _id
+                    _id = self.engine.new_item(rollback, session, "nslcmops", indata, kwargs)
+                    self._set_location_header(main_topic, version, "ns_lcm_op_occs", _id)
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 else:
-                    _id = self.engine.new_item(rollback, session, engine_item, indata, kwargs, cherrypy.request.headers,
-                                               force=force)
-                    self._set_location_header(topic, version, item, _id)
+                    _id = self.engine.new_item(rollback, session, engine_topic, indata, kwargs,
+                                               cherrypy.request.headers, force=force)
+                    self._set_location_header(main_topic, version, topic, _id)
                     outdata = {"id": _id}
-                    # TODO form NsdInfo when item in ("ns_descriptors", "vnf_packages")
+                    # TODO form NsdInfo when topic in ("ns_descriptors", "vnf_packages")
                 cherrypy.response.status = HTTPStatus.CREATED.value
 
             elif method == "DELETE":
                 if not _id:
-                    outdata = self.engine.del_item_list(session, engine_item, kwargs)
+                    outdata = self.engine.del_item_list(session, engine_topic, kwargs)
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
-                    if item == "ns_instances_content" and not force:
-                        opp_id = self.engine.ns_operation(rollback, session, _id, "terminate", {"autoremove": True},
-                                                          None)
+                    if topic == "ns_instances_content" and not force:
+                        nslcmop_desc = {
+                            "lcmOperationType": "terminate",
+                            "nsInstanceId": _id,
+                            "autoremove": True
+                        }
+                        opp_id = self.engine.new_item(rollback, session, "nslcmops", nslcmop_desc, None)
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
-                        self.engine.del_item(session, engine_item, _id, force)
+                        self.engine.del_item(session, engine_topic, _id, force)
                         cherrypy.response.status = HTTPStatus.NO_CONTENT.value
-                if engine_item in ("vim_accounts", "sdns"):
+                if engine_topic in ("vim_accounts", "sdns"):
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
 
             elif method in ("PUT", "PATCH"):
@@ -734,35 +720,44 @@ class Server(object):
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
-                if item2 in ("nsd_content", "package_content") and method == "PUT":
-                    completed = self.engine.upload_content(session, engine_item, _id, indata, kwargs,
-                                                           cherrypy.request.headers)
+                if item in ("nsd_content", "package_content") and method == "PUT":
+                    completed = self.engine.upload_content(session, engine_topic, _id, indata, kwargs,
+                                                           cherrypy.request.headers, force=force)
                     if not completed:
                         cherrypy.response.headers["Transaction-Id"] = id
                 else:
-                    self.engine.edit_item(session, engine_item, _id, indata, kwargs, force=force)
+                    self.engine.edit_item(session, engine_topic, _id, indata, kwargs, force=force)
                 cherrypy.response.status = HTTPStatus.NO_CONTENT.value
             else:
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
-        except (NbiException, EngineException, DbException, FsException, MsgException) as e:
-            cherrypy.log("Exception {}".format(e))
-            cherrypy.response.status = e.http_code.value
+        except Exception as e:
+            if isinstance(e, (NbiException, EngineException, DbException, FsException, MsgException, AuthException)):
+                http_code_value = cherrypy.response.status = e.http_code.value
+                http_code_name = e.http_code.name
+                cherrypy.log("Exception {}".format(e))
+            else:
+                http_code_value = cherrypy.response.status = HTTPStatus.BAD_REQUEST.value  # INTERNAL_SERVER_ERROR
+                cherrypy.log("CRITICAL: Exception {}".format(e))
+                http_code_name = HTTPStatus.BAD_REQUEST.name
             if hasattr(outdata, "close"):  # is an open file
                 outdata.close()
+            error_text = str(e)
+            rollback.reverse()
             for rollback_item in rollback:
                 try:
                     self.engine.del_item(**rollback_item, session=session, force=True)
                 except Exception as e2:
-                    cherrypy.log("Rollback Exception {}: {}".format(rollback_item, e2))
-            error_text = str(e)
-            if isinstance(e, MsgException):
-                error_text = "{} has been '{}' but other modules cannot be informed because an error on bus".format(
-                    engine_item[:-1], method, error_text)
+                    rollback_error_text = "Rollback Exception {}: {}".format(rollback_item, e2)
+                    cherrypy.log(rollback_error_text)
+                    error_text += ". " + rollback_error_text
+            # if isinstance(e, MsgException):
+            #     error_text = "{} has been '{}' but other modules cannot be informed because an error on bus".format(
+            #         engine_topic[:-1], method, error_text)
             problem_details = {
-                "code": e.http_code.name,
-                "status": e.http_code.value,
-                "detail": str(e),
+                "code": http_code_name,
+                "status": http_code_value,
+                "detail": error_text,
             }
             return self._format_out(problem_details, session)
             # raise cherrypy.HTTPError(e.http_code.value, str(e))
@@ -804,12 +799,13 @@ def _start_service():
                 update_dict['server.socket_host'] = v
             elif k1 in ("server", "test", "auth", "log"):
                 update_dict[k1 + '.' + k2] = v
-            elif k1 in ("message", "database", "storage"):
+            elif k1 in ("message", "database", "storage", "authentication"):
                 # k2 = k2.replace('_', '.')
-                if k2 == "port":
+                if k2 in ("port", "db_port"):
                     engine_config[k1][k2] = int(v)
                 else:
                     engine_config[k1][k2] = v
+
         except ValueError as e:
             cherrypy.log.error("Ignoring environ '{}': " + str(e))
         except Exception as e:
@@ -833,16 +829,16 @@ def _start_service():
         file_handler.setFormatter(log_formatter_simple)
         logger_cherry.addHandler(file_handler)
         logger_nbi.addHandler(file_handler)
-    else:
-        for format_, logger in {"nbi.server": logger_server,
-                                "nbi.access": logger_access,
-                                "%(name)s %(filename)s:%(lineno)s": logger_nbi
-                                }.items():
-            log_format_cherry = "%(asctime)s %(levelname)s {} %(message)s".format(format_)
-            log_formatter_cherry = logging.Formatter(log_format_cherry, datefmt='%Y-%m-%dT%H:%M:%S')
-            str_handler = logging.StreamHandler()
-            str_handler.setFormatter(log_formatter_cherry)
-            logger.addHandler(str_handler)
+    # log always to standard output
+    for format_, logger in {"nbi.server %(filename)s:%(lineno)s": logger_server,
+                            "nbi.access %(filename)s:%(lineno)s": logger_access,
+                            "%(name)s %(filename)s:%(lineno)s": logger_nbi
+                            }.items():
+        log_format_cherry = "%(asctime)s %(levelname)s {} %(message)s".format(format_)
+        log_formatter_cherry = logging.Formatter(log_format_cherry, datefmt='%Y-%m-%dT%H:%M:%S')
+        str_handler = logging.StreamHandler()
+        str_handler.setFormatter(log_formatter_cherry)
+        logger.addHandler(str_handler)
 
     if engine_config["global"].get("log.level"):
         logger_cherry.setLevel(engine_config["global"]["log.level"])
@@ -861,9 +857,11 @@ def _start_service():
             logger_module.setLevel(engine_config[k1]["loglevel"])
     # TODO add more entries, e.g.: storage
     cherrypy.tree.apps['/osm'].root.engine.start(engine_config)
+    cherrypy.tree.apps['/osm'].root.authenticator.start(engine_config)
     try:
         cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
-    except EngineException:
+        cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
+    except (EngineException, AuthException):
         pass
     # getenv('OSMOPENMANO_TENANT', None)
 
