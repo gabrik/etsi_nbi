@@ -66,7 +66,7 @@ then
     done
 fi
 
-for item in vim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects # vims
+for item in vim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects nsts # vims
 do
     curl --insecure ${OSMNBI_URL}/test/db-clear/${item}
     echo " ${item}"

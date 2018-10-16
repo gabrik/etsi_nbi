@@ -24,6 +24,7 @@ html_start = """
       <a href="/osm/vnfpkgm/v1/vnf_packages">VNFDs </a>
       <a href="/osm/nsd/v1/ns_descriptors">NSDs </a>
       <a href="/osm/nslcm/v1/ns_instances">NSs </a>
+      <a href="/osm/nst/v1/netslice_templates">NSTDs </a>
       <a href="/osm/admin/v1/users">USERs </a>
       <a href="/osm/admin/v1/projects">PROJECTs </a>
       <a href="/osm/admin/v1/tokens">TOKENs </a>
@@ -125,6 +126,8 @@ def format(data, request, response, session):
             body += html_upload_body.format(request.path_info, "VNFD")
         elif request.path_info == "/nsd/v1/ns_descriptors":
             body += html_upload_body.format(request.path_info + "_content", "NSD")
+        elif request.path_info == "/nst/v1/nst_templates":
+            body += html_upload_body.format(request.path_info + "_content", "NSTD")
         for k in data:
             if isinstance(k, dict):
                 data_id = k.pop("_id", None)

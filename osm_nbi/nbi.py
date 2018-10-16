@@ -661,7 +661,7 @@ class Server(object):
             if not main_topic or not version or not topic:
                 raise NbiException("URL must contain at least 'main_topic/version/topic'",
                                    HTTPStatus.METHOD_NOT_ALLOWED)
-            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm"):
+            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm", "nst", "nsilcm"):
                 raise NbiException("URL main_topic '{}' not supported".format(main_topic),
                                    HTTPStatus.METHOD_NOT_ALLOWED)
             if version != 'v1':
@@ -705,14 +705,15 @@ class Server(object):
             elif main_topic == "nsilcm":
                 engine_topic = "nsis"
                 if topic == "nsi_lcm_op_occs":
-                    engine_topic = "nsilcmops"
+                    engine_topic = "nsilcmops" 
             elif main_topic == "pdu":
                 engine_topic = "pdus"
             if engine_topic == "vims":   # TODO this is for backward compatibility, it will remove in the future
                 engine_topic = "vim_accounts"
 
             if method == "GET":
-                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd", "nst", "nst_content"):
+                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd", "nst", "nst_content", 
+                            "netslice_instances"):
                     if item in ("vnfd", "nsd", "nst"):
                         path = "$DESCRIPTOR"
                     elif args:
