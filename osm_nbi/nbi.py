@@ -750,7 +750,11 @@ class Server(object):
             rollback.reverse()
             for rollback_item in rollback:
                 try:
-                    self.engine.del_item(**rollback_item, session=session, force=True)
+                    if rollback_item.get("operation") == "set":
+                        self.engine.db.set_one(rollback_item["topic"], {"_id": rollback_item["_id"]},
+                                               rollback_item["content"], fail_on_empty=False)
+                    else:
+                        self.engine.del_item(**rollback_item, session=session, force=True)
                 except Exception as e2:
                     rollback_error_text = "Rollback Exception {}: {}".format(rollback_item, e2)
                     cherrypy.log(rollback_error_text)

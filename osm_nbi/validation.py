@@ -196,6 +196,7 @@ ns_instantiate = {
         "vimAccountId": id_schema,
         "ssh_keys": {"type": "array", "items": {"type": "string"}},
         "nsr_id": id_schema,
+        "vduImage": name_schema,
         "vnf": {
             "type": "array",
             "minItems": 1,

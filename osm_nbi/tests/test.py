@@ -583,6 +583,7 @@ class TestDeploy:
         self.ns_test = None
         self.ns_id = None
         self.vnfds_test = []
+        self.vnfds_id = []
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
@@ -619,17 +620,21 @@ class TestDeploy:
                 headers = headers_zip_yaml
             if self.step % 2 == 0:
                 # vnfd CREATE AND UPLOAD in one step:
-                engine.test("DEPLOY{}".format(self.step), "Onboard VNFD in one step", "POST",
+                test_name = "DEPLOY{}".format(self.step)
+                engine.test(test_name, "Onboard VNFD in one step", "POST",
                             "/vnfpkgm/v1/vnf_packages_content", headers, "@b" + vnfd_filename_path, 201,
                             {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, yaml)
-                self.vnfds_test.append("DEPLOY" + str(self.step))
+                self.vnfds_test.append(test_name)
+                self.vnfds_id.append(engine.test_ids[test_name])
                 self.step += 1
             else:
                 # vnfd CREATE AND UPLOAD ZIP
-                engine.test("DEPLOY{}".format(self.step), "Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages",
+                test_name = "DEPLOY{}".format(self.step)
+                engine.test(test_name, "Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages",
                             headers_json, None, 201,
                             {"Location": "/vnfpkgm/v1/vnf_packages/", "Content-Type": "application/json"}, "json")
-                self.vnfds_test.append("DEPLOY" + str(self.step))
+                self.vnfds_test.append(test_name)
+                self.vnfds_id.append(engine.test_ids[test_name])
                 self.step += 1
                 # location = r.headers["Location"]
                 # vnfd_id = location[location.rfind("/")+1:]
@@ -722,7 +727,7 @@ class TestDeploy:
                 raise TestException("NS instantiate is not done after {} seconds".format(timeout_deploy))
             self.step += 1
 
-    def _wait_nslcmop_ready(self, engine, nslcmop_test, timeout_deploy):
+    def _wait_nslcmop_ready(self, engine, nslcmop_test, timeout_deploy, expected_fail=False):
         wait = timeout
         while wait >= 0:
             r = engine.test("DEPLOY{}".format(self.step), "Wait to ns lcm operation complete", "GET",
@@ -730,9 +735,14 @@ class TestDeploy:
                             200, r_header_json, "json")
             nslcmop = r.json()
             if "COMPLETED" in nslcmop["operationState"]:
+                if expected_fail:
+                    raise TestException("NS terminate has success, expecting failing: {}".format(
+                        nslcmop["detailed-status"]))
                 break
             elif "FAILED" in nslcmop["operationState"]:
-                raise TestException("NS terminate has failed: {}".format(nslcmop["detailed-status"]))
+                if not expected_fail:
+                    raise TestException("NS terminate has failed: {}".format(nslcmop["detailed-status"]))
+                break
             wait -= 5
             sleep(5)
         else:
@@ -905,6 +915,82 @@ class TestDeployHackfestCirros(TestDeploy):
         self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
         self.uss = {'1': "cirros", '2': "cirros"}
         self.pss = {'1': "cubswin:)", '2': "cubswin:)"}
+
+
+class TestDeployHackfest1(TestDeploy):
+    description = "Load and deploy Hackfest_1_vnfd example"
+
+    def __init__(self):
+        super().__init__()
+        self.vnfd_filenames = ("hackfest_1_vnfd.tar.gz",)
+        self.nsd_filename = "hackfest_1_nsd.tar.gz"
+        # self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        # self.uss = {'1': "cirros", '2': "cirros"}
+        # self.pss = {'1': "cubswin:)", '2': "cubswin:)"}
+
+
+class TestDeployHackfestCirrosScaling(TestDeploy):
+    description = "Load and deploy Hackfest cirros_2vnf_ns example with scaling modifications"
+
+    def __init__(self):
+        super().__init__()
+        self.vnfd_filenames = ("cirros_vnf.tar.gz",)
+        self.nsd_filename = "cirros_2vnf_ns.tar.gz"
+
+    def create_descriptors(self, engine):
+        super().create_descriptors(engine)
+        # Modify VNFD to add scaling and count=2
+        payload = """
+            vdu: 
+                "$id: 'cirros_vnfd-VM'":
+                    count: 2
+            scaling-group-descriptor:
+                -   name: "scale_cirros"
+                    max-instance-count: 2
+                    vdu:
+                    -   vdu-id-ref: cirros_vnfd-VM
+                        count: 2
+        """
+        engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
+                    "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfds_id[0]),
+                    headers_yaml, payload, 204, None, None)
+        self.step += 1
+
+    def aditional_operations(self, engine, test_osm, manual_check):
+        if not test_osm:
+            return
+        # 2 perform scale out twice
+        payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
+                  '{scaling-group-descriptor: scale_cirros, member-vnf-index: "1"}}}'
+        for i in range(0, 2):
+            engine.test("DEPLOY{}".format(self.step), "Execute scale action over NS", "POST",
+                        "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+                        201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+            nslcmop2_scale_out = "DEPLOY{}".format(self.step)
+            self._wait_nslcmop_ready(engine, nslcmop2_scale_out, timeout_deploy)
+            if manual_check:
+                input('NS scale out done. Check that two more vdus are there')
+            # TODO check automatic
+
+        # 2 perform scale in
+        payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_IN, scaleByStepData: ' \
+                  '{scaling-group-descriptor: scale_cirros, member-vnf-index: "1"}}}'
+        for i in range(0, 2):
+            engine.test("DEPLOY{}".format(self.step), "Execute scale IN action over NS", "POST",
+                        "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+                        201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+            nslcmop2_scale_in = "DEPLOY{}".format(self.step)
+            self._wait_nslcmop_ready(engine, nslcmop2_scale_in, timeout_deploy)
+            if manual_check:
+                input('NS scale in done. Check that two less vdus are there')
+            # TODO check automatic
+
+        # perform scale in that must fail as reached limit
+        engine.test("DEPLOY{}".format(self.step), "Execute scale IN out of limit action over NS", "POST",
+                    "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+                    201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+        nslcmop2_scale_in = "DEPLOY{}".format(self.step)
+        self._wait_nslcmop_ready(engine, nslcmop2_scale_in, timeout_deploy, expected_fail=True)
 
 
 class TestDeployIpMac(TestDeploy):
@@ -1275,10 +1361,12 @@ if __name__ == "__main__":
             "VIM-SDN": TestVIMSDN,
             "Deploy-Custom": TestDeploy,
             "Deploy-Hackfest-Cirros": TestDeployHackfestCirros,
+            "Deploy-Hackfest-Cirros-Scaling": TestDeployHackfestCirrosScaling,
             "Deploy-Hackfest-3Charmed": TestDeployHackfest3Charmed,
             "Deploy-Hackfest-4": TestDeployHackfest4,
             "Deploy-CirrosMacIp": TestDeployIpMac,
             "TestDescriptors": TestDescriptors,
+            "TestDeployHackfest1": TestDeployHackfest1,
             # "Deploy-MultiVIM": TestDeployMultiVIM,
         }
         test_to_do = []
