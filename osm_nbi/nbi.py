@@ -858,11 +858,8 @@ def _start_service():
     # TODO add more entries, e.g.: storage
     cherrypy.tree.apps['/osm'].root.engine.start(engine_config)
     cherrypy.tree.apps['/osm'].root.authenticator.start(engine_config)
-    try:
-        cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
-        cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
-    except (EngineException, AuthException):
-        pass
+    cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
+    cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
     # getenv('OSMOPENMANO_TENANT', None)
 
 

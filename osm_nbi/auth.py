@@ -84,9 +84,9 @@ class Authenticator:
         except DbException as e:
             raise AuthException(str(e), http_code=e.http_code)
 
-    def init_db(self, target_version='1.0'):
+    def init_db(self, target_version='1.1'):
         """
-        Check if the database has been initialized. If not, create the required tables
+        Check if the database has been initialized, with at least one user. If not, create an adthe required tables
         and insert the predefined mappings between roles and permissions.
 
         :param target_version: schema version that should be present in the database.

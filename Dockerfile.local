@@ -52,6 +52,9 @@ ENV OSMNBI_STORAGE_PATH                         /app/storage
 ENV OSMNBI_DATABASE_DRIVER                      mongo
 ENV OSMNBI_DATABASE_HOST                        mongo
 ENV OSMNBI_DATABASE_PORT                        27017
+# ENV OSMNBI_DATABASE_USER                      xxx
+# ENV OSMNBI_DATABASE_PASSWORD                  xxx
+# ENV OSMNBI_DATABASE_MASTERPASSWORD            xxx
 # web
 ENV OSMNBI_STATIC_DIR                           /app/osm_nbi/html_public
 # logs
