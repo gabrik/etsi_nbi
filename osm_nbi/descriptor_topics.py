@@ -8,7 +8,7 @@ from hashlib import md5
 from osm_common.dbbase import DbException, deep_update_rfc7396
 from http import HTTPStatus
 from validation import ValidationError, pdu_new_schema, pdu_edit_schema
-from base_topic import BaseTopic, EngineException
+from base_topic import BaseTopic, EngineException, get_iterable
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -388,6 +388,143 @@ class VnfdTopic(DescriptorTopic):
 
     def _validate_input_new(self, indata, force=False):
         # TODO validate with pyangbind, serialize
+
+        # Cross references validation in the descriptor
+        if indata.get("mgmt-interface"):
+            if indata["mgmt-interface"].get("cp"):
+                for cp in get_iterable(indata.get("connection-point")):
+                    if cp["name"] == indata["mgmt-interface"]["cp"]:
+                        break
+                else:
+                    raise EngineException("mgmt-interface:cp='{} must match an existing connection-point"
+                                          .format(indata["mgmt-interface"].get("cp")),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        else:
+            raise EngineException("'mgmt-interface' is a mandatory field and it is not defined",
+                                  http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+        for vdu in get_iterable(indata.get("vdu")):
+            for interface in get_iterable(vdu.get("interface")):
+                if interface.get("external-connection-point-ref"):
+                    for cp in get_iterable(indata.get("connection-point")):
+                        if cp["name"] == interface.get("external-connection-point-ref"):
+                            break
+                    else:
+                        raise EngineException("vdu[id='{}']:interface[name='{}']:external-connection-point-ref='{} "
+                                              "must match an existing connection-point"
+                                              .format(vdu["id"], interface["name"],
+                                                      interface["external-connection-point-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            for interface in get_iterable(vdu.get("interface")):
+                if interface.get("internal-connection-point-ref"):
+                    for internal_cp in get_iterable(vdu.get("internal-connection-point")):
+                        if interface.get("internal-connection-point-ref") == internal_cp.get("id"):
+                            break
+                    else:
+                        raise EngineException("vdu[id='{}']:interface[name='{}']:internal-connection-point-ref='{}' is "
+                                              "not associated to an internal-connection-point".format
+                                              (vdu["id"], interface["name"],
+                                               interface["internal-connection-point-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        for ivld in get_iterable(indata.get("internal-vld")):
+            for icp in get_iterable(ivld.get("internal-connection-point")):
+                icp_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    for internal_cp in get_iterable(vdu.get("internal-connection-point")):
+                        if icp["id-ref"] == internal_cp["id"]:
+                            icp_mark = True
+                            break
+                    if icp_mark:
+                        break
+                else:
+                    raise EngineException("'internal-vld='{}':internal-connection-point='{}'' must match an existing "
+                                          "internal-connection-point".format(ivld["id"], icp["id-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            if ivld.get("ip-profile-ref"):
+                for ip_prof in get_iterable(indata["ip-profiles"]):
+                    if ip_prof["name"] == get_iterable(ivld.get("ip-profile-ref")):
+                        break
+                else:
+                    raise EngineException("internal-vld='{}':ip-profile-ref='{}' does not exist".format(
+                        ivld["id"], ivld["ip-profile-ref"]),
+                        http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        for mp in get_iterable(indata.get("monitoring-param")):
+            if mp.get("vdu-monitoring-param"):
+                mp_vmp_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    for vmp in get_iterable(vdu.get("monitoring-param")):
+                        if vmp["id"] == mp["vdu-monitoring-param"]["vdu-monitoring-param-ref"] and vdu["id"] ==\
+                                mp["vdu-monitoring-param"]["vdu-ref"]:
+                            mp_vmp_mark = True
+                            break
+                    if mp_vmp_mark:
+                        break
+                else:
+                    raise EngineException("monitoring-param:vdu-monitoring-param:vdu-monitoring-param-ref='{}' not "
+                                          "defined in VDU vdu[id='{}'] or does not exist an VDU with this id"
+                                          .format(mp["vdu-monitoring-param"]["vdu-monitoring-param-ref"],
+                                                  mp["vdu-monitoring-param"]["vdu-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            elif mp.get("vdu-metric"):
+                mp_vm_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    if vdu.get("vdu-configuration"):
+                        for metric in get_iterable(vdu["vdu-configuration"].get("metrics")):
+                            if metric["name"] == mp["vdu-metric"]["vdu-metric-name-ref"] and vdu["id"] == \
+                                    mp["vdu-metric"]["vdu-ref"]:
+                                mp_vm_mark = True
+                                break
+                        if mp_vm_mark:
+                            break
+                else:
+                    raise EngineException("monitoring-param:vdu-metric:vdu-metric-name-ref='{}' not defined in VDU "
+                                          "vdu[id='{}'] or or does not exist an VDU with this id"
+                                          .format(mp["vdu-metric"]["vdu-metric-name-ref"],
+                                                  mp["vdu-metric"]["vdu-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+        for sgd in get_iterable(indata.get("scaling-group-descriptor")):
+            for sp in get_iterable(sgd.get("scaling-policy")):
+                for sc in get_iterable(sp.get("scaling-criteria")):
+                    for mp in get_iterable(indata.get("monitoring-param")):
+                        if mp["id"] == get_iterable(sc.get("vnf-monitoring-param-ref")):
+                            break
+                    else:
+                        raise EngineException("scaling-group-descriptor:name='{}':scaling-criteria:name='{}':"
+                                              "vnf-monitoring-param-ref='{}' not defined in any 'monitoring-param"
+                                              "['id']'".format(sgd["name"], sc["name"], sc["vnf-monitoring-param-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            for sgd_vdu in get_iterable(sgd.get("vdu")):
+                sgd_vdu_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    if vdu["id"] == sgd_vdu["vdu-id-ref"]:
+                        sgd_vdu_mark = True
+                        break
+                if sgd_vdu_mark:
+                    break
+            else:
+                raise EngineException("scaling-group-descriptor[name='{}']:vdu not defined and"
+                                      "it is mandatory in any 'scaling-group-descriptor'"
+                                      .format(sgd["name"]),
+                                      http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            for sca in get_iterable(sgd.get("scaling-config-action")):
+                sca_vcp_mark = False
+                if indata.get("vnf-configuration"):
+                    for primitive in get_iterable(indata["vnf-configuration"].get("config-primitive")):
+                        if primitive["name"] == sca["vnf-config-primitive-name-ref"]:
+                            sca_vcp_mark = True
+                            break
+                    else:
+                        raise EngineException("scaling-group-descriptor:name='{}':scaling-config-action:vnf-config-"
+                                              "primitive-name-ref='{}' not defined in "
+                                              "'vnf-configuration:config-primitive'"
+                                              .format(sgd["name"], sca["vnf-config-primitive-name-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+                else:
+                    raise EngineException("'vnf-configuration' not defined in the descriptor but it is referenced",
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+                if sca_vcp_mark:
+                    break
         return indata
 
     def _validate_input_edit(self, indata, force=False):
