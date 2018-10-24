@@ -95,5 +95,5 @@ if __name__ == "__main__":
                 print("RX {}: {}".format(r.status_code, r.text))
             if "id" in response:
                 print("---\nid: {}".format(response["id"]))
-    except Exception as e:
+    except Exception:
         raise

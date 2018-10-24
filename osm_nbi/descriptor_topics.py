@@ -282,17 +282,20 @@ class DescriptorTopic(BaseTopic):
         """
         Return the file content of a vnfd or nsd
         :param session: contains the used login username and working project
-        :param _id: Identity of the vnfd, ndsd
+        :param _id: Identity of the vnfd, nsd
         :param path: artifact path or "$DESCRIPTOR" or None
         :param accept_header: Content of Accept header. Must contain applition/zip or/and text/plain
-        :return: opened file or raises an exception
+        :return: opened file plus Accept format or raises an exception
         """
         accept_text = accept_zip = False
         if accept_header:
             if 'text/plain' in accept_header or '*/*' in accept_header:
                 accept_text = True
             if 'application/zip' in accept_header or '*/*' in accept_header:
-                accept_zip = True
+                accept_zip = 'application/zip'
+            elif 'application/gzip' in accept_header:
+                accept_zip = 'application/gzip'
+
         if not accept_text and not accept_zip:
             raise EngineException("provide request header 'Accept' with 'application/zip' or 'text/plain'",
                                   http_code=HTTPStatus.NOT_ACCEPTABLE)
@@ -330,7 +333,7 @@ class DescriptorTopic(BaseTopic):
                 # TODO generate zipfile if not present
                 raise EngineException("Only allowed 'text/plain' Accept header for this descriptor. To be solved in "
                                       "future versions", http_code=HTTPStatus.NOT_ACCEPTABLE)
-            return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), "application/zip"
+            return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), accept_zip
 
 
 class VnfdTopic(DescriptorTopic):

@@ -153,6 +153,20 @@ class Engine(object):
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.map_topic[topic].show(session, _id)
 
+    def get_file(self, session, topic, _id, path=None, accept_header=None):
+        """
+        Get descriptor package or artifact file content
+        :param session: contains the used login username and working project
+        :param topic: it can be: users, projects, vnfds, nsds,
+        :param _id: server id of the item
+        :param path: artifact path or "$DESCRIPTOR" or None
+        :param accept_header: Content of Accept header. Must contain applition/zip or/and text/plain
+        :return: opened file plus Accept format or raises an exception
+        """
+        if topic not in self.map_topic:
+            raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
+        return self.map_topic[topic].get_file(session, _id, path, accept_header)
+
     def del_item_list(self, session, topic, _filter=None):
         """
         Delete a list of items
