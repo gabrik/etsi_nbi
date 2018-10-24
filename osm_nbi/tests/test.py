@@ -125,7 +125,7 @@ class TestRest:
             del self.s.headers[key]
 
     def test(self, name, description, method, url, headers, payload, expected_codes, expected_headers,
-             expected_payload):
+             expected_payload, store_file=None):
         """
         Performs an http request and check http code response. Exit if different than allowed. It get the returned id
         that can be used by following test in the URL with {name} where name is the name of the test
@@ -137,7 +137,8 @@ class TestRest:
         :param payload: Can be a dict, transformed to json, a text or a file if starts with '@'
         :param expected_codes: expected response codes, can be int, int tuple or int range
         :param expected_headers: expected response headers, dict with key values
-        :param expected_payload: expected payload, 0 if empty, 'yaml', 'json', 'text', 'zip'
+        :param expected_payload: expected payload, 0 if empty, 'yaml', 'json', 'text', 'zip', 'octet-stream'
+        :param store_file: filename to store content
         :return: requests response
         """
         r = None
@@ -178,10 +179,13 @@ class TestRest:
                 self.old_test_description = test_description
                 logger.warning(test_description)
             stream = False
-            # if expected_payload == "zip":
-            #     stream = True
+            if expected_payload in ("zip", "octet-string") or store_file:
+                stream = True
             r = getattr(self.s, method.lower())(url, data=payload, headers=headers, verify=self.verify, stream=stream)
-            logger.debug("RX {}: {}".format(r.status_code, r.text))
+            if expected_payload in ("zip", "octet-string") or store_file:
+                logger.debug("RX {}".format(r.status_code))
+            else:
+                logger.debug("RX {}: {}".format(r.status_code, r.text))
 
             # check response
             if expected_codes:
@@ -212,7 +216,7 @@ class TestRest:
                         yaml.safe_load(r.text)
                     except Exception as e:
                         raise TestException("Expected yaml response payload, but got Exception {}".format(e))
-                elif expected_payload == "zip":
+                elif expected_payload in ("zip", "octet-string"):
                     if len(r.content) == 0:
                         raise TestException("Expected some response payload, but got empty")
                     # try:
@@ -226,6 +230,11 @@ class TestRest:
                     if len(r.content) == 0:
                         raise TestException("Expected some response payload, but got empty")
                     # r.text
+            if store_file:
+                with open(store_file, 'wb') as fd:
+                    for chunk in r.iter_content(chunk_size=128):
+                        fd.write(chunk)
+
             location = r.headers.get("Location")
             if location:
                 _id = location[location.rfind("/") + 1:]
@@ -1125,6 +1134,120 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # # TODO check automatic
 
 
+class TestDescriptors:
+    description = "Test VNFD, NSD, PDU descriptors CRUD and dependencies"
+
+    def __init__(self):
+        self.step = 0
+        self.vnfd_filename = "hackfest_3charmed_vnfd.tar.gz"
+        self.nsd_filename = "hackfest_3charmed_nsd.tar.gz"
+        self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
+        self.vnfd_id = None
+        self.nsd_id = None
+
+    def run(self, engine, test_osm, manual_check, test_params=None):
+        engine.get_autorization()
+        temp_dir = os.path.dirname(os.path.abspath(__file__)) + "/temp/"
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+
+        # download files
+        for filename in (self.vnfd_filename, self.nsd_filename):
+            filename_path = temp_dir + filename
+            if not os.path.exists(filename_path):
+                with open(filename_path, "wb") as file:
+                    response = requests.get(self.descriptor_url + filename)
+                    if response.status_code >= 300:
+                        raise TestException("Error downloading descriptor from '{}': {}".format(
+                            self.descriptor_url + filename, response.status_code))
+                    file.write(response.content)
+
+        vnfd_filename_path = temp_dir + self.vnfd_filename
+        nsd_filename_path = temp_dir + self.nsd_filename
+
+        # vnfd CREATE AND UPLOAD in one step:
+        test_name = "DESCRIPTOR{}".format(self.step)
+        engine.test(test_name, "Onboard VNFD in one step", "POST",
+                    "/vnfpkgm/v1/vnf_packages_content", headers_zip_yaml, "@b" + vnfd_filename_path, 201,
+                    {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, "yaml")
+        self.vnfd_id = engine.test_ids[test_name]
+        self.step += 1
+
+        # get vnfd descriptor
+        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD descriptor", "GET",
+                    "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
+        self.step += 1
+
+        # get vnfd file descriptor
+        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD file descriptor", "GET",
+                    "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(self.vnfd_id), headers_text, None, 200,
+                    r_header_text, "text", temp_dir+"vnfd-yaml")
+        self.step += 1
+        # TODO compare files: diff vnfd-yaml hackfest_3charmed_vnfd/hackfest_3charmed_vnfd.yaml
+
+        # get vnfd zip file package
+        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD zip package", "GET",
+                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id), headers_zip, None, 200,
+                    r_header_zip, "zip", temp_dir+"vnfd-zip")
+        self.step += 1
+        # TODO compare files: diff vnfd-zip hackfest_3charmed_vnfd.tar.gz
+
+        # get vnfd artifact
+        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD artifact package", "GET",
+                    "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/osm.png".format(self.vnfd_id), headers_zip, None, 200,
+                    r_header_octect, "octet-string", temp_dir+"vnfd-icon")
+        self.step += 1
+        # TODO compare files: diff vnfd-icon hackfest_3charmed_vnfd/icons/osm.png
+
+        # nsd CREATE AND UPLOAD in one step:
+        test_name = "DESCRIPTOR{}".format(self.step)
+        engine.test(test_name, "Onboard NSD in one step", "POST",
+                    "/nsd/v1/ns_descriptors_content", headers_zip_yaml, "@b" + nsd_filename_path, 201,
+                    {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, "yaml")
+        self.nsd_id = engine.test_ids[test_name]
+        self.step += 1
+
+        # get nsd descriptor
+        engine.test("DESCRIPTOR" + str(self.step), "Get NSD descriptor", "GET",
+                    "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
+        self.step += 1
+
+        # get nsd file descriptor
+        engine.test("DESCRIPTOR" + str(self.step), "Get NSD file descriptor", "GET",
+                    "/nsd/v1/ns_descriptors/{}/nsd".format(self.nsd_id), headers_text, None, 200,
+                    r_header_text, "text", temp_dir+"nsd-yaml")
+        self.step += 1
+        # TODO compare files: diff nsd-yaml hackfest_3charmed_nsd/hackfest_3charmed_nsd.yaml
+
+        # get nsd zip file package
+        engine.test("DESCRIPTOR" + str(self.step), "Get NSD zip package", "GET",
+                    "/nsd/v1/ns_descriptors/{}/nsd_content".format(self.nsd_id), headers_zip, None, 200,
+                    r_header_zip, "zip", temp_dir+"nsd-zip")
+        self.step += 1
+        # TODO compare files: diff nsd-zip hackfest_3charmed_nsd.tar.gz
+
+        # get nsd artifact
+        engine.test("DESCRIPTOR" + str(self.step), "Get NSD artifact package", "GET",
+                    "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm.png".format(self.nsd_id), headers_zip, None, 200,
+                    r_header_octect, "octet-string", temp_dir+"nsd-icon")
+        self.step += 1
+        # TODO compare files: diff nsd-icon hackfest_3charmed_nsd/icons/osm.png
+
+        # vnfd DELETE
+        test_rest.test("DESCRIPTOR" + str(self.step), "Delete VNFD conflict", "DELETE",
+                       "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 409, None, None)
+        self.step += 1
+
+        test_rest.test("DESCRIPTOR" + str(self.step), "Delete VNFD force", "DELETE",
+                       "/vnfpkgm/v1/vnf_packages/{}?FORCE=TRUE".format(self.vnfd_id), headers_yaml, None, 204, None, 0)
+        self.step += 1
+
+        # nsd DELETE
+        test_rest.test("DESCRIPTOR" + str(self.step), "Delete NSD", "DELETE",
+                       "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 204, None, 0)
+        self.step += 1
+
+
 if __name__ == "__main__":
     global logger
     test = ""
@@ -1155,6 +1278,7 @@ if __name__ == "__main__":
             "Deploy-Hackfest-3Charmed": TestDeployHackfest3Charmed,
             "Deploy-Hackfest-4": TestDeployHackfest4,
             "Deploy-CirrosMacIp": TestDeployIpMac,
+            "TestDescriptors": TestDescriptors,
             # "Deploy-MultiVIM": TestDeployMultiVIM,
         }
         test_to_do = []
@@ -1233,136 +1357,6 @@ if __name__ == "__main__":
         exit(0)
 
         # get token
-
-        # # tests once authorized
-        # for t in test_authorized_list:
-        #     test_rest.test(*t)
-        #
-        # # tests admin
-        # for t in test_admin_list1:
-        #     test_rest.test(*t)
-        #
-        # # vnfd CREATE
-        # r = test_rest.test("VNFD1", "Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages", headers_json, None,
-        #                    201, {"Location": "/vnfpkgm/v1/vnf_packages/", "Content-Type": "application/json"}, "json")
-        # location = r.headers["Location"]
-        # vnfd_id = location[location.rfind("/")+1:]
-        # # print(location, vnfd_id)
-        #
-        # # vnfd UPLOAD test
-        # r = test_rest.test("VNFD2", "Onboard VNFD step 2 as TEXT", "PUT",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
-        #                    r_header_text, "@./cirros_vnf/cirros_vnfd.yaml", 204, None, 0)
-        #
-        # # vnfd SHOW OSM format
-        # r = test_rest.test("VNFD3", "Show VNFD OSM format", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
-        #                    headers_json, None, 200, r_header_json, "json")
-        #
-        # # vnfd SHOW text
-        # r = test_rest.test("VNFD4", "Show VNFD SOL005 text", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
-        #                    headers_text, None, 200, r_header_text, "text")
-        #
-        # # vnfd UPLOAD ZIP
-        # makedirs("temp", exist_ok=True)
-        # tar = tarfile.open("temp/cirros_vnf.tar.gz", "w:gz")
-        # tar.add("cirros_vnf")
-        # tar.close()
-        # r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
-        #                    r_header_zip, "@b./temp/cirros_vnf.tar.gz", 204, None, 0)
-        #
-        # # vnfd SHOW OSM format
-        # r = test_rest.test("VNFD6", "Show VNFD OSM format", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages_content/{}".format(vnfd_id),
-        #                    headers_json, None, 200, r_header_json, "json")
-        #
-        # # vnfd SHOW zip
-        # r = test_rest.test("VNFD7", "Show VNFD SOL005 zip", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
-        #                    headers_zip, None, 200, r_header_zip, "zip")
-        # # vnfd SHOW descriptor
-        # r = test_rest.test("VNFD8", "Show VNFD descriptor", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(vnfd_id),
-        #                    headers_text, None, 200, r_header_text, "text")
-        # # vnfd SHOW actifact
-        # r = test_rest.test("VNFD9", "Show VNFD artifact", "GET",
-        #                    "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/cirros-64.png".format(vnfd_id),
-        #                    headers_text, None, 200, r_header_octect, "text")
-        #
-        # # # vnfd DELETE
-        # # r = test_rest.test("VNFD10", "Delete VNFD SOL005 text", "DELETE",
-        # # "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
-        # #                    headers_yaml, None, 204, None, 0)
-        #
-        # # nsd CREATE
-        # r = test_rest.test("NSD1", "Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors", headers_json, None,
-        #                    201, {"Location": "/nsd/v1/ns_descriptors/", "Content-Type": "application/json"}, "json")
-        # location = r.headers["Location"]
-        # nsd_id = location[location.rfind("/")+1:]
-        # # print(location, nsd_id)
-        #
-        # # nsd UPLOAD test
-        # r = test_rest.test("NSD2", "Onboard NSD with missing vnfd", "PUT",
-        #                    "/nsd/v1/ns_descriptors/<>/nsd_content?constituent-vnfd.0.vnfd-id-ref"
-        #                    "=NONEXISTING-VNFD".format(nsd_id),
-        #                    r_header_text, "@./cirros_ns/cirros_nsd.yaml", 409, r_header_yaml, "yaml")
-        #
-        # # # VNF_CREATE
-        # # r = test_rest.test("VNFD5", "Onboard VNFD step 3 replace with ZIP", "PUT",
-        # # "/vnfpkgm/v1/vnf_packages/{}/package_content".format(vnfd_id),
-        # #                    r_header_zip, "@b./temp/cirros_vnf.tar.gz", 204, None, 0)
-        #
-        # r = test_rest.test("NSD2", "Onboard NSD step 2 as TEXT", "PUT",
-        #                    "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-        #                    r_header_text, "@./cirros_ns/cirros_nsd.yaml", 204, None, 0)
-        #
-        # # nsd SHOW OSM format
-        # r = test_rest.test("NSD3", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
-        #                    headers_json, None, 200, r_header_json, "json")
-        #
-        # # nsd SHOW text
-        # r = test_rest.test("NSD4", "Show NSD SOL005 text", "GET",
-        #                    "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-        #                    headers_text, None, 200, r_header_text, "text")
-        #
-        # # nsd UPLOAD ZIP
-        # makedirs("temp", exist_ok=True)
-        # tar = tarfile.open("temp/cirros_ns.tar.gz", "w:gz")
-        # tar.add("cirros_ns")
-        # tar.close()
-        # r = test_rest.test("NSD5", "Onboard NSD step 3 replace with ZIP", "PUT",
-        #                    "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-        #                    r_header_zip, "@b./temp/cirros_ns.tar.gz", 204, None, 0)
-        #
-        # # nsd SHOW OSM format
-        # r = test_rest.test("NSD6", "Show NSD OSM format", "GET", "/nsd/v1/ns_descriptors_content/{}".format(nsd_id),
-        #                    headers_json, None, 200, r_header_json, "json")
-        #
-        # # nsd SHOW zip
-        # r = test_rest.test("NSD7","Show NSD SOL005 zip","GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(nsd_id),
-        #                    headers_zip, None, 200, r_header_zip, "zip")
-        #
-        # # nsd SHOW descriptor
-        # r = test_rest.test("NSD8", "Show NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}/nsd".format(nsd_id),
-        #                    headers_text, None, 200, r_header_text, "text")
-        # # nsd SHOW actifact
-        # r = test_rest.test("NSD9", "Show NSD artifact", "GET",
-        #                    "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm_2x.png".format(nsd_id),
-        #                    headers_text, None, 200, r_header_octect, "text")
-        #
-        # # vnfd DELETE
-        # r = test_rest.test("VNFD10", "Delete VNFD conflict", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
-        #                    headers_yaml, None, 409, r_header_yaml, "yaml")
-        #
-        # # nsd DELETE
-        # r = test_rest.test("NSD10", "Delete NSD SOL005 text", "DELETE", "/nsd/v1/ns_descriptors/{}".format(nsd_id),
-        #                    headers_yaml, None, 204, None, 0)
-        #
-        # # vnfd DELETE
-        # r = test_rest.test("VNFD10","Delete VNFD SOL005 text","DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id),
-        #                    headers_yaml, None, 204, None, 0)
         print("PASS")
 
     except TestException as e:
