@@ -291,38 +291,31 @@ class NsLcmOpTopic(BaseTopic):
 
         def _check_vnf_instantiation_params(in_vnfd, vnfd):
 
-            for in_vdu in get_iterable(in_vnfd["vdu"]):
-                if in_vdu.get("id"):
-                    for vdu in get_iterable(vnfd["vdu"]):
-                        if in_vdu["id"] == vdu["id"]:
-                            for volume in get_iterable(in_vdu.get("volume")):
-                                for volumed in get_iterable(vdu.get("volumes")):
-                                    if volumed["name"] == volume["name"]:
-                                        break
-                                else:
-                                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
-                                                          "volume:name='{}' is not present at vnfd:vdu:volumes list".
-                                                          format(in_vnf["member-vnf-index"], in_vdu["id"],
-                                                                 volume["name"]))
-                            for in_iface in get_iterable(in_vdu["interface"]):
-                                if in_iface.get("name"):
-                                    for iface in vdu["interface"]:
-                                        if in_iface["name"] == iface["name"]:
-                                            break
-                                    else:
-                                        raise EngineException("vdu[id='{}']:interface[name='{}'] defined in "
-                                                              "additional configuration, is not present at vnfd '{}'"
-                                                              .format(in_vdu["id"], in_iface["name"], vnfd["id"]))
-                                else:
-                                    raise EngineException("vdu[id='{}']:interface defined in additional "
-                                                          "configuration needs 'name' parameter to be defined"
-                                                          .format(in_vdu["id"]))
-                            break
-                    else:
-                        raise EngineException("VDU '{}' defined in additional configuration, is not present at vnfd "
-                                              "'{}'".format(in_vdu["id"], vnfd["id"]))
+            for in_vdu in get_iterable(in_vnfd.get("vdu")):
+                for vdu in get_iterable(vnfd.get("vdu")):
+                    if in_vdu["id"] == vdu["id"]:
+                        for volume in get_iterable(in_vdu.get("volume")):
+                            for volumed in get_iterable(vdu.get("volumes")):
+                                if volumed["name"] == volume["name"]:
+                                    break
+                            else:
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                      "volume:name='{}' is not present at vnfd:vdu:volumes list".
+                                                      format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                             volume["name"]))
+                        for in_iface in get_iterable(in_vdu["interface"]):
+                            for iface in get_iterable(vdu.get("interface")):
+                                if in_iface["name"] == iface["name"]:
+                                    break
+                            else:
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                      "interface[name='{}'] is not present at vnfd:vdu:interface"
+                                                      .format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                              in_iface["name"]))
+                        break
                 else:
-                    raise EngineException("No ID defined for VDU in the additional configuration")
+                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}'] is is not present "
+                                          "at vnfd:vdu".format(in_vnf["member-vnf-index"], in_vdu["id"]))
 
             for in_ivld in get_iterable(in_vnfd.get("internal-vld")):
                 for ivld in get_iterable(vnfd.get("internal-vld")):
@@ -332,10 +325,11 @@ class NsLcmOpTopic(BaseTopic):
                                 if in_icp["id-ref"] == icp["id-ref"]:
                                     break
                             else:
-                                raise EngineException("internal-vld:name='{}':internal-connection-point:"
-                                                      "id-ref='{}' defined in additional configuration, is not "
-                                                      "present at vnfd '{}'".format(in_ivld["name"],
-                                                                                    in_icp["id-ref"], vnfd["id"]))
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld[name"
+                                                      "='{}']:internal-connection-point[id-ref:'{}'] is not present at "
+                                                      "vnfd:internal-vld:name/id:internal-connection-point"
+                                                      .format(in_vnf["member-vnf-index"], in_ivld["name"],
+                                                              in_icp["id-ref"], vnfd["id"]))
                         break
                 else:
                     raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld:name='{}'"
