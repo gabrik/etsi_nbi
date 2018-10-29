@@ -9,7 +9,7 @@ from http import HTTPStatus
 from base_topic import EngineException, versiontuple
 from admin_topics import UserTopic, ProjectTopic, VimAccountTopic, SdnTopic
 from descriptor_topics import VnfdTopic, NsdTopic, PduTopic, NstTopic
-from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic, NsiTopic
+from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic, NsiTopic, NsiLcmOpTopic
 from base64 import b64encode
 from os import urandom
 
@@ -31,6 +31,7 @@ class Engine(object):
         "users": UserTopic,
         "projects": ProjectTopic,
         "nsis": NsiTopic,
+        "nsilcmops": NsiLcmOpTopic
         # [NEW_TOPIC]: add an entry here
     }
 

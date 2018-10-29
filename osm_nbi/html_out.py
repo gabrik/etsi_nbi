@@ -25,6 +25,7 @@ html_start = """
       <a href="/osm/nsd/v1/ns_descriptors">NSDs </a>
       <a href="/osm/nslcm/v1/ns_instances">NSs </a>
       <a href="/osm/nst/v1/netslice_templates">NSTDs </a>
+      <a href="/osm/nsilcm/v1/netslice_instances">NSIs </a>
       <a href="/osm/admin/v1/users">USERs </a>
       <a href="/osm/admin/v1/projects">PROJECTs </a>
       <a href="/osm/admin/v1/tokens">TOKENs </a>
@@ -102,6 +103,15 @@ html_nslcmop_body = """
 </form>
 """
 
+html_nsilcmop_body = """
+<a href="/osm/nsilcm/v1/nsi_lcm_op_occs?nsiInstanceId={id}">nsilcm operations </a>
+<form action="/osm/nsilcm/v1/netslice_instances/{id}/terminate" method="post" enctype="multipart/form-data">
+    <h3> <table style="border: 0;"> <tr>
+        <td> <input type="submit" value="Terminate"/> </td>
+    </tr> </table> </h3>
+</form>
+"""
+
 
 def format(data, request, response, session):
     """
@@ -145,6 +155,10 @@ def format(data, request, response, session):
                     request.path_info.startswith("/nslcm/v1/ns_instances/"):
                 _id = request.path_info[request.path_info.rfind("/")+1:]
                 body += html_nslcmop_body.format(id=_id)
+            elif request.path_info.startswith("/nsilcm/v1/netslice_instances_content/") or \
+                    request.path_info.startswith("/nsilcm/v1/netslice_instances/"):
+                _id = request.path_info[request.path_info.rfind("/")+1:]
+                body += html_nsilcmop_body.format(id=_id)
         body += "<pre>" + html_escape(yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False)) + \
                 "</pre>"
     elif data is None:

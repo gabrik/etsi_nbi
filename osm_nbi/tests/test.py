@@ -1343,7 +1343,7 @@ class TestNstTemplates:
     def run(self, engine, test_osm, manual_check, test_params=None):
         # nst CREATE
         engine.get_autorization()
-        r = engine.test("NST", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
+        r = engine.test("NST1", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
                         self.nst_filenames, 
                         201, {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, 
                         "yaml")
@@ -1351,13 +1351,13 @@ class TestNstTemplates:
         nst_id = location[location.rfind("/")+1:]
 
         # nstd SHOW OSM format
-        r = engine.test("NST", "Show NSTD OSM format", "GET", 
-                        "/nst/v1/netslice_templates_content/{}".format(nst_id), headers_json, None, 
+        r = engine.test("NST2", "Show NSTD OSM format", "GET", 
+                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
                         200, r_header_json, "json")      
 
         # nstd DELETE
-        r = engine.test("NST", "Delete NSTD", "DELETE", 
-                        "/nst/v1/netslice_templates_content/{}".format(nst_id), headers_json, None, 
+        r = engine.test("NST3", "Delete NSTD", "DELETE", 
+                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
                         204, None, 0)
 
 

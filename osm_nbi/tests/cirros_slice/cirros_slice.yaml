@@ -1,21 +1,17 @@
 nst:
     nst:
     -   id: cirros_nst
-        name: cirros_slice_template
+        name: cirros_netslice_template
         SNSSAI-identifier:
         -   slice-service-type: eMBB
         quality-of-service:
         -   id: 1
         netslice-subnet:
-        -   id: cirros_nsd_nst
-            name: cirros_ns
-            short-name: cirros_ns
-            vendor: OSM
+        -   id: cirros_nsd
             is-shared-nss: 'false'
-            description: Slice for osm-3.0-three 2nd-hackfest nsd2vnfs package
-            version: '1.0'
-            nsd-ref: cirros_2vnf_nsd
+            description: Slice example for osm-5.0
+            nsd-ref: cirros_nsd
             instantiation-parameters:
-            -   name: cirros_2vnf_nsd
-                nsdId: cirros_2vnf_nsd
+            -   nsName: cirros_nsd
+                nsdId: cirros_nsd
                 vimAccountId: openstack_18

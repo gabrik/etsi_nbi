@@ -675,9 +675,7 @@ class Server(object):
                 force = kwargs.pop("FORCE")
             else:
                 force = False
-
             self._check_valid_url_method(method, main_topic, version, topic, _id, item, *args)
-
             if main_topic == "admin" and topic == "tokens":
                 return self.token(method, _id, kwargs)
 
@@ -712,8 +710,7 @@ class Server(object):
                 engine_topic = "vim_accounts"
 
             if method == "GET":
-                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd", "nst", "nst_content", 
-                            "netslice_instances"):
+                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd", "nst", "nst_content"):
                     if item in ("vnfd", "nsd", "nst"):
                         path = "$DESCRIPTOR"
                     elif args:
@@ -759,14 +756,14 @@ class Server(object):
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 elif topic == "netslice_instances_content":
-                    # creates NSI
+                    # creates NetSlice_Instance_record (NSIR)
                     _id = self.engine.new_item(rollback, session, engine_topic, indata, kwargs, force=force)
-                    # creates nsilcmop
+                    self._set_location_header(main_topic, version, topic, _id)
                     indata["lcmOperationType"] = "instantiate"
                     indata["nsiInstanceId"] = _id
-                    self.engine.new_item(rollback, session, "nsilcmops", indata, None)
-                    self._set_location_header(main_topic, version, topic, _id)
+                    self.engine.new_item(rollback, session, "nsilcmops", indata, kwargs)
                     outdata = {"id": _id}
+                    
                 elif topic == "netslice_instances" and item:
                     indata["lcmOperationType"] = item
                     indata["nsiInstanceId"] = _id

@@ -40,7 +40,7 @@ class DescriptorTopic(BaseTopic):
         BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
         content["_admin"]["onboardingState"] = "CREATED"
         content["_admin"]["operationalState"] = "DISABLED"
-        content["_admin"]["usageSate"] = "NOT_IN_USE"
+        content["_admin"]["usageState"] = "NOT_IN_USE"
 
     def delete(self, session, _id, force=False, dry_run=False):
         """
@@ -657,16 +657,6 @@ class NstTopic(DescriptorTopic):
             clean_indata = clean_indata['nst'][0]
         return clean_indata
 
-    def _validate_input_new(self, indata, force=False):
-        # transform netslice-subnet:nsd-ref to string
-        if indata.get("netslice-subnet"):
-            for nsd_ref in indata["netslice-subnet"]:
-                if "nsd-ref" in nsd_ref:
-                    nsd_ref["nsd-ref"] = str(nsd_ref["nsd-ref"])
-
-        # TODO validate with pyangbind, serialize
-        return indata
-
     def _validate_input_edit(self, indata, force=False):
         # TODO validate with pyangbind, serialize
         return indata
@@ -698,15 +688,21 @@ class NstTopic(DescriptorTopic):
         Check that there is not any NSIR that uses this NST. Only NSIRs belonging to this project are considered. Note
         that NST can be public and be used by other projects.
         :param session:
-        :param _id: nsd internal id
+        :param _id: nst internal id
         :param force: Avoid this checking
         :return: None or raises EngineException with the conflict
         """
         # TODO: Check this method
         if force:
             return
+        # Get Network Slice Template from Database
         _filter = self._get_project_filter(session, write=False, show_all=False)
-        _filter["nst"] = _id
+        _filter["_id"] = _id
+        nst = self.db.get_one("nst", _filter)
+        
+        # Search NSIs using NST via nst-ref
+        _filter = self._get_project_filter(session, write=False, show_all=False)
+        _filter["nst-ref"] = nst["id"]
         if self.db.get_list("nsis", _filter):
             raise EngineException("There is some NSIS that depends on this NST", http_code=HTTPStatus.CONFLICT)
 
@@ -725,7 +721,7 @@ class PduTopic(BaseTopic):
         BaseTopic.format_on_new(content, project_id=None, make_public=make_public)
         content["_admin"]["onboardingState"] = "CREATED"
         content["_admin"]["operationalState"] = "DISABLED"
-        content["_admin"]["usageSate"] = "NOT_IN_USE"
+        content["_admin"]["usageState"] = "NOT_IN_USE"
 
     def check_conflict_on_del(self, session, _id, force=False):
         if force:
