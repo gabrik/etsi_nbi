@@ -259,9 +259,11 @@ class Server(object):
                     if "application/json" in cherrypy.request.headers["Content-Type"]:
                         error_text = "Invalid json format "
                         indata = json.load(self.reader(cherrypy.request.body))
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                     elif "application/yaml" in cherrypy.request.headers["Content-Type"]:
                         error_text = "Invalid yaml format "
                         indata = yaml.load(cherrypy.request.body)
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                     elif "application/binary" in cherrypy.request.headers["Content-Type"] or \
                          "application/gzip" in cherrypy.request.headers["Content-Type"] or \
                          "application/zip" in cherrypy.request.headers["Content-Type"] or \
@@ -281,9 +283,11 @@ class Server(object):
                         # 'application/yaml' for input format are available")
                         error_text = "Invalid yaml format "
                         indata = yaml.load(cherrypy.request.body)
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                 else:
                     error_text = "Invalid yaml format "
                     indata = yaml.load(cherrypy.request.body)
+                    cherrypy.request.headers.pop("Content-File-MD5", None)
             if not indata:
                 indata = {}
 
