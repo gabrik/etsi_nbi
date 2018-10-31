@@ -194,7 +194,7 @@ ns_instantiate = {
         "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
         "vimAccountId": id_schema,
-        "ssh_keys": {"type": "string"},
+        "ssh_keys": {"type": "array", "items": {"type": "string"}},
         "nsr_id": id_schema,
         "vnf": {
             "type": "array",
