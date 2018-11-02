@@ -8,7 +8,11 @@ from hashlib import md5
 from osm_common.dbbase import DbException, deep_update_rfc7396
 from http import HTTPStatus
 from validation import ValidationError, pdu_new_schema, pdu_edit_schema
-from base_topic import BaseTopic, EngineException
+from base_topic import BaseTopic, EngineException, get_iterable
+from osm_im.vnfd import vnfd as vnfd_im
+from osm_im.nsd import nsd as nsd_im
+from pyangbind.lib.serialise import pybindJSONDecoder
+import pyangbind.lib.pybindJSON as pybindJSON
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -282,17 +286,20 @@ class DescriptorTopic(BaseTopic):
         """
         Return the file content of a vnfd or nsd
         :param session: contains the used login username and working project
-        :param _id: Identity of the vnfd, ndsd
+        :param _id: Identity of the vnfd, nsd
         :param path: artifact path or "$DESCRIPTOR" or None
         :param accept_header: Content of Accept header. Must contain applition/zip or/and text/plain
-        :return: opened file or raises an exception
+        :return: opened file plus Accept format or raises an exception
         """
         accept_text = accept_zip = False
         if accept_header:
             if 'text/plain' in accept_header or '*/*' in accept_header:
                 accept_text = True
             if 'application/zip' in accept_header or '*/*' in accept_header:
-                accept_zip = True
+                accept_zip = 'application/zip'
+            elif 'application/gzip' in accept_header:
+                accept_zip = 'application/gzip'
+
         if not accept_text and not accept_zip:
             raise EngineException("provide request header 'Accept' with 'application/zip' or 'text/plain'",
                                   http_code=HTTPStatus.NOT_ACCEPTABLE)
@@ -330,7 +337,30 @@ class DescriptorTopic(BaseTopic):
                 # TODO generate zipfile if not present
                 raise EngineException("Only allowed 'text/plain' Accept header for this descriptor. To be solved in "
                                       "future versions", http_code=HTTPStatus.NOT_ACCEPTABLE)
-            return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), "application/zip"
+            return self.fs.file_open((storage['folder'], storage['zipfile']), "rb"), accept_zip
+
+    def pyangbind_validation(self, item, data, force=False):
+        try:
+            if item == "vnfds":
+                myvnfd = vnfd_im()
+                pybindJSONDecoder.load_ietf_json({'vnfd:vnfd-catalog': {'vnfd': [data]}}, None, None, obj=myvnfd,
+                                                 path_helper=True, skip_unknown=force)
+                out = pybindJSON.dumps(myvnfd, mode="ietf")
+            elif item == "nsds":
+                mynsd = nsd_im()
+                pybindJSONDecoder.load_ietf_json({'nsd:nsd-catalog': {'nsd': [data]}}, None, None, obj=mynsd,
+                                                 path_helper=True, skip_unknown=force)
+                out = pybindJSON.dumps(mynsd, mode="ietf")
+            else:
+                raise EngineException("Not possible to validate '{}' item".format(item),
+                                      http_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+            desc_out = self._remove_envelop(yaml.safe_load(out))
+            return desc_out
+
+        except Exception as e:
+            raise EngineException("Error in pyangbind validation: {}".format(str(e)),
+                                  http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
 
 class VnfdTopic(DescriptorTopic):
@@ -351,8 +381,12 @@ class VnfdTopic(DescriptorTopic):
             clean_indata = clean_indata['vnfd-catalog']
         if clean_indata.get('vnfd'):
             if not isinstance(clean_indata['vnfd'], list) or len(clean_indata['vnfd']) != 1:
-                raise EngineException("'vnfd' must be a list only one element")
+                raise EngineException("'vnfd' must be a list of only one element")
             clean_indata = clean_indata['vnfd'][0]
+        elif clean_indata.get('vnfd:vnfd'):
+            if not isinstance(clean_indata['vnfd:vnfd'], list) or len(clean_indata['vnfd:vnfd']) != 1:
+                raise EngineException("'vnfd:vnfd' must be a list of only one element")
+            clean_indata = clean_indata['vnfd:vnfd'][0]
         return clean_indata
 
     def check_conflict_on_del(self, session, _id, force=False):
@@ -385,6 +419,138 @@ class VnfdTopic(DescriptorTopic):
 
     def _validate_input_new(self, indata, force=False):
         # TODO validate with pyangbind, serialize
+        indata = self.pyangbind_validation("vnfds", indata, force)
+        # Cross references validation in the descriptor
+        if not indata.get("mgmt-interface"):
+            raise EngineException("'mgmt-interface' is a mandatory field and it is not defined",
+                                  http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        if indata["mgmt-interface"].get("cp"):
+            for cp in get_iterable(indata.get("connection-point")):
+                if cp["name"] == indata["mgmt-interface"]["cp"]:
+                    break
+            else:
+                raise EngineException("mgmt-interface:cp='{}' must match an existing connection-point"
+                                      .format(indata["mgmt-interface"]["cp"]),
+                                      http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+        for vdu in get_iterable(indata.get("vdu")):
+            for interface in get_iterable(vdu.get("interface")):
+                if interface.get("external-connection-point-ref"):
+                    for cp in get_iterable(indata.get("connection-point")):
+                        if cp["name"] == interface["external-connection-point-ref"]:
+                            break
+                    else:
+                        raise EngineException("vdu[id='{}']:interface[name='{}']:external-connection-point-ref='{}' "
+                                              "must match an existing connection-point"
+                                              .format(vdu["id"], interface["name"],
+                                                      interface["external-connection-point-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+                elif interface.get("internal-connection-point-ref"):
+                    for internal_cp in get_iterable(vdu.get("internal-connection-point")):
+                        if interface["internal-connection-point-ref"] == internal_cp.get("id"):
+                            break
+                    else:
+                        raise EngineException("vdu[id='{}']:interface[name='{}']:internal-connection-point-ref='{}' "
+                                              "must match an existing vdu:internal-connection-point"
+                                              .format(vdu["id"], interface["name"],
+                                                      interface["internal-connection-point-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        for ivld in get_iterable(indata.get("internal-vld")):
+            for icp in get_iterable(ivld.get("internal-connection-point")):
+                icp_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    for internal_cp in get_iterable(vdu.get("internal-connection-point")):
+                        if icp["id-ref"] == internal_cp["id"]:
+                            icp_mark = True
+                            break
+                    if icp_mark:
+                        break
+                else:
+                    raise EngineException("internal-vld[id='{}']:internal-connection-point='{}' must match an existing "
+                                          "vdu:internal-connection-point".format(ivld["id"], icp["id-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            if ivld.get("ip-profile-ref"):
+                for ip_prof in get_iterable(indata.get("ip-profiles")):
+                    if ip_prof["name"] == get_iterable(ivld.get("ip-profile-ref")):
+                        break
+                else:
+                    raise EngineException("internal-vld[id='{}']:ip-profile-ref='{}' does not exist".format(
+                        ivld["id"], ivld["ip-profile-ref"]),
+                        http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        for mp in get_iterable(indata.get("monitoring-param")):
+            if mp.get("vdu-monitoring-param"):
+                mp_vmp_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    for vmp in get_iterable(vdu.get("monitoring-param")):
+                        if vmp["id"] == mp["vdu-monitoring-param"].get("vdu-monitoring-param-ref") and vdu["id"] ==\
+                                mp["vdu-monitoring-param"]["vdu-ref"]:
+                            mp_vmp_mark = True
+                            break
+                    if mp_vmp_mark:
+                        break
+                else:
+                    raise EngineException("monitoring-param:vdu-monitoring-param:vdu-monitoring-param-ref='{}' not "
+                                          "defined at vdu[id='{}'] or vdu does not exist"
+                                          .format(mp["vdu-monitoring-param"]["vdu-monitoring-param-ref"],
+                                                  mp["vdu-monitoring-param"]["vdu-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            elif mp.get("vdu-metric"):
+                mp_vm_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    if vdu.get("vdu-configuration"):
+                        for metric in get_iterable(vdu["vdu-configuration"].get("metrics")):
+                            if metric["name"] == mp["vdu-metric"]["vdu-metric-name-ref"] and vdu["id"] == \
+                                    mp["vdu-metric"]["vdu-ref"]:
+                                mp_vm_mark = True
+                                break
+                        if mp_vm_mark:
+                            break
+                else:
+                    raise EngineException("monitoring-param:vdu-metric:vdu-metric-name-ref='{}' not defined at "
+                                          "vdu[id='{}'] or vdu does not exist"
+                                          .format(mp["vdu-metric"]["vdu-metric-name-ref"],
+                                                  mp["vdu-metric"]["vdu-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+
+        for sgd in get_iterable(indata.get("scaling-group-descriptor")):
+            for sp in get_iterable(sgd.get("scaling-policy")):
+                for sc in get_iterable(sp.get("scaling-criteria")):
+                    for mp in get_iterable(indata.get("monitoring-param")):
+                        if mp["id"] == get_iterable(sc.get("vnf-monitoring-param-ref")):
+                            break
+                    else:
+                        raise EngineException("scaling-group-descriptor[name='{}']:scaling-criteria[name='{}']:"
+                                              "vnf-monitoring-param-ref='{}' not defined in any monitoring-param"
+                                              .format(sgd["name"], sc["name"], sc["vnf-monitoring-param-ref"]),
+                                              http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            for sgd_vdu in get_iterable(sgd.get("vdu")):
+                sgd_vdu_mark = False
+                for vdu in get_iterable(indata.get("vdu")):
+                    if vdu["id"] == sgd_vdu["vdu-id-ref"]:
+                        sgd_vdu_mark = True
+                        break
+                if sgd_vdu_mark:
+                    break
+            else:
+                raise EngineException("scaling-group-descriptor[name='{}']:vdu-id-ref={} does not match any vdu"
+                                      .format(sgd["name"], sgd_vdu["vdu-id-ref"]),
+                                      http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            for sca in get_iterable(sgd.get("scaling-config-action")):
+                if not indata.get("vnf-configuration"):
+                    raise EngineException("'vnf-configuration' not defined in the descriptor but it is referenced by "
+                                          "scaling-group-descriptor[name='{}']:scaling-config-action"
+                                          .format(sgd["name"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+                for primitive in get_iterable(indata["vnf-configuration"].get("config-primitive")):
+                    if primitive["name"] == sca["vnf-config-primitive-name-ref"]:
+                        break
+                else:
+                    raise EngineException("scaling-group-descriptor[name='{}']:scaling-config-action:vnf-config-"
+                                          "primitive-name-ref='{}' does not match any "
+                                          "vnf-configuration:config-primitive:name"
+                                          .format(sgd["name"], sca["vnf-config-primitive-name-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
         return indata
 
     def _validate_input_edit(self, indata, force=False):
@@ -411,18 +577,18 @@ class NsdTopic(DescriptorTopic):
             clean_indata = clean_indata['nsd-catalog']
         if clean_indata.get('nsd'):
             if not isinstance(clean_indata['nsd'], list) or len(clean_indata['nsd']) != 1:
-                raise EngineException("'nsd' must be a list only one element")
+                raise EngineException("'nsd' must be a list of only one element")
             clean_indata = clean_indata['nsd'][0]
+        elif clean_indata.get('nsd:nsd'):
+            if not isinstance(clean_indata['nsd:nsd'], list) or len(clean_indata['nsd:nsd']) != 1:
+                raise EngineException("'nsd:nsd' must be a list of only one element")
+            clean_indata = clean_indata['nsd:nsd'][0]
         return clean_indata
 
     def _validate_input_new(self, indata, force=False):
-        # transform constituent-vnfd:member-vnf-index to string
-        if indata.get("constituent-vnfd"):
-            for constituent_vnfd in indata["constituent-vnfd"]:
-                if "member-vnf-index" in constituent_vnfd:
-                    constituent_vnfd["member-vnf-index"] = str(constituent_vnfd["member-vnf-index"])
 
         # TODO validate with pyangbind, serialize
+        indata = self.pyangbind_validation("nsds", indata, force)
         return indata
 
     def _validate_input_edit(self, indata, force=False):

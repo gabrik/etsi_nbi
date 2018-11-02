@@ -319,9 +319,11 @@ class Server(object):
                     if "application/json" in cherrypy.request.headers["Content-Type"]:
                         error_text = "Invalid json format "
                         indata = json.load(self.reader(cherrypy.request.body))
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                     elif "application/yaml" in cherrypy.request.headers["Content-Type"]:
                         error_text = "Invalid yaml format "
                         indata = yaml.load(cherrypy.request.body)
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                     elif "application/binary" in cherrypy.request.headers["Content-Type"] or \
                          "application/gzip" in cherrypy.request.headers["Content-Type"] or \
                          "application/zip" in cherrypy.request.headers["Content-Type"] or \
@@ -341,9 +343,11 @@ class Server(object):
                         # 'application/yaml' for input format are available")
                         error_text = "Invalid yaml format "
                         indata = yaml.load(cherrypy.request.body)
+                        cherrypy.request.headers.pop("Content-File-MD5", None)
                 else:
                     error_text = "Invalid yaml format "
                     indata = yaml.load(cherrypy.request.body)
+                    cherrypy.request.headers.pop("Content-File-MD5", None)
             if not indata:
                 indata = {}
 
@@ -837,7 +841,11 @@ class Server(object):
             rollback.reverse()
             for rollback_item in rollback:
                 try:
-                    self.engine.del_item(**rollback_item, session=session, force=True)
+                    if rollback_item.get("operation") == "set":
+                        self.engine.db.set_one(rollback_item["topic"], {"_id": rollback_item["_id"]},
+                                               rollback_item["content"], fail_on_empty=False)
+                    else:
+                        self.engine.del_item(**rollback_item, session=session, force=True)
                 except Exception as e2:
                     rollback_error_text = "Rollback Exception {}: {}".format(rollback_item, e2)
                     cherrypy.log(rollback_error_text)
@@ -949,11 +957,8 @@ def _start_service():
     # TODO add more entries, e.g.: storage
     cherrypy.tree.apps['/osm'].root.engine.start(engine_config)
     cherrypy.tree.apps['/osm'].root.authenticator.start(engine_config)
-    try:
-        cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
-        cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
-    except (EngineException, AuthException):
-        pass
+    cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
+    cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
     # getenv('OSMOPENMANO_TENANT', None)
 
 

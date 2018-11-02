@@ -4,6 +4,7 @@ Contains html text in variables to make and html response
 
 import yaml
 from http import HTTPStatus
+from html import escape as html_escape
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -129,7 +130,8 @@ def format(data, request, response, session):
                 data_id = k.pop("_id", None)
             elif isinstance(k, str):
                 data_id = k
-            body += '<p> <a href="/osm/{url}/{id}">{id}</a>: {t} </p>'.format(url=request.path_info, id=data_id, t=k)
+            body += '<p> <a href="/osm/{url}/{id}">{id}</a>: {t} </p>'.format(url=request.path_info, id=data_id,
+                                                                              t=html_escape(str(k)))
     elif isinstance(data, dict):
         if "Location" in response.headers:
             body += '<a href="{}"> show </a>'.format(response.headers["Location"])
@@ -140,12 +142,13 @@ def format(data, request, response, session):
                     request.path_info.startswith("/nslcm/v1/ns_instances/"):
                 _id = request.path_info[request.path_info.rfind("/")+1:]
                 body += html_nslcmop_body.format(id=_id)
-        body += "<pre>" + yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False) + "</pre>"
+        body += "<pre>" + html_escape(yaml.safe_dump(data, explicit_start=True, indent=4, default_flow_style=False)) + \
+                "</pre>"
     elif data is None:
         if request.method == "DELETE" or "METHOD=DELETE" in request.query_string:
             body += "<pre> deleted </pre>"
     else:
-        body = str(data)
+        body = html_escape(str(data))
     user_text = "    "
     if session:
         if session.get("username"):

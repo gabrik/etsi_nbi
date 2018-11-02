@@ -12,7 +12,7 @@ Validator of input data using JSON schemas for those items that not contains an 
 
 # Basis schemas
 patern_name = "^[ -~]+$"
-nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\.\$'\"]+$"}
+nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\\.\\$'\"]+$"}
 passwd_schema = {"type": "string", "minLength": 1, "maxLength": 60}
 name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^,;()'\"]+$"}
 string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
@@ -24,13 +24,15 @@ null_schema = {"type": "null"}
 # "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
 time_schema = {"type": "string", "pattern": "^[0-9]{4}-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]([0-5]:){2}"}
-pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\.[0-9a-fA-F]$"}
+pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\\.[0-9a-fA-F]$"}
+# allows [] for wildcards. For that reason huge length limit is set
+pci_extended_schema = {"type": "string", "pattern": "^[0-9a-fA-F.:-\\[\\]]{12,40}$"}
 http_schema = {"type": "string", "pattern": "^https?://[^'\"=]+$"}
 bandwidth_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]bps)?$"}
 memory_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]i?[Bb])?$"}
 integer0_schema = {"type": "integer", "minimum": 0}
 integer1_schema = {"type": "integer", "minimum": 1}
-path_schema = {"type": "string", "pattern": "^(\.){0,2}(/[^/\"':{}\(\)]+)+$"}
+path_schema = {"type": "string", "pattern": "^(\\.){0,2}(/[^/\"':{}\\(\\)]+)+$"}
 vlan_schema = {"type": "integer", "minimum": 1, "maximum": 4095}
 vlan1000_schema = {"type": "integer", "minimum": 1000, "maximum": 4095}
 mac_schema = {"type": "string",
@@ -38,9 +40,9 @@ mac_schema = {"type": "string",
 dpid_Schema = {"type": "string", "pattern": "^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){7}$"}
 # mac_schema={"type":"string", "pattern":"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"}
 ip_schema = {"type": "string",
-             "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"}
+             "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"}
 ip_prefix_schema = {"type": "string",
-                    "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+                    "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}"
                                "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(30|[12]?[0-9])$"}
 port_schema = {"type": "integer", "minimum": 1, "maximum": 65534}
 object_schema = {"type": "object"}
@@ -52,7 +54,7 @@ size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
 array_edition_schema = {
     "type": "object",
     "patternProperties": {
-        "^\$": "Any"
+        "^\\$": "Any"
     },
     "additionalProperties": False,
     "minProperties": 1,
@@ -194,8 +196,9 @@ ns_instantiate = {
         "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
         "vimAccountId": id_schema,
-        "ssh_keys": {"type": "string"},
+        "ssh_keys": {"type": "array", "items": {"type": "string"}},
         "nsr_id": id_schema,
+        "vduImage": name_schema,
         "vnf": {
             "type": "array",
             "minItems": 1,
@@ -393,7 +396,7 @@ sdn_port_mapping_schema = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "pci": pci_schema,
+                        "pci": pci_extended_schema,
                         "switch_port": nameshort_schema,
                         "switch_mac": mac_schema
                     },

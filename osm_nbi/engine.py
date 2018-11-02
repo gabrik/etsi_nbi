@@ -10,6 +10,8 @@ from base_topic import EngineException, versiontuple
 from admin_topics import UserTopic, ProjectTopic, VimAccountTopic, SdnTopic
 from descriptor_topics import VnfdTopic, NsdTopic, PduTopic
 from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic
+from base64 import b64encode
+from os import urandom
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 min_common_version = "0.1.8"
@@ -153,6 +155,20 @@ class Engine(object):
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.map_topic[topic].show(session, _id)
 
+    def get_file(self, session, topic, _id, path=None, accept_header=None):
+        """
+        Get descriptor package or artifact file content
+        :param session: contains the used login username and working project
+        :param topic: it can be: users, projects, vnfds, nsds,
+        :param _id: server id of the item
+        :param path: artifact path or "$DESCRIPTOR" or None
+        :param accept_header: Content of Accept header. Must contain applition/zip or/and text/plain
+        :return: opened file plus Accept format or raises an exception
+        """
+        if topic not in self.map_topic:
+            raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
+        return self.map_topic[topic].get_file(session, _id, path, accept_header)
+
     def del_item_list(self, session, topic, _filter=None):
         """
         Delete a list of items
@@ -215,30 +231,49 @@ class Engine(object):
         _id = self.map_topic["users"].new(roolback_list, fake_session, user_desc, force=True)
         return _id
 
+    def upgrade_db(self, current_version, target_version):
+        if not target_version or current_version == target_version:
+            return
+        if target_version == '1.0':
+            if not current_version:
+                # create database version
+                serial = urandom(32)
+                version_data = {
+                    "_id": 'version',               # Always 'version'
+                    "version_int": 1000,            # version number
+                    "version": '1.0',               # version text
+                    "date": "2018-10-25",           # version date
+                    "description": "added serial",  # changes in this version
+                    'status': 'ENABLED',            # ENABLED, DISABLED (migration in process), ERROR,
+                    'serial': b64encode(serial)
+                }
+                self.db.create("admin", version_data)
+                self.db.set_secret_key(serial)
+            # TODO add future migrations here
+
+        raise EngineException("Wrong database version '{}'. Expected '{}'"
+                              ". It cannot be up/down-grade".format(current_version, target_version),
+                              http_code=HTTPStatus.INTERNAL_SERVER_ERROR)
+
     def init_db(self, target_version='1.0'):
         """
-        Init database if empty. If not empty it checks that database version is ok.
+        Init database if empty. If not empty it checks that database version and migrates if needed
         If empty, it creates a new user admin/admin at 'users' and a new entry at 'version'
+        :param target_version: check desired database version. Migrate to it if possible or raises exception
         :return: None if ok, exception if error or if the version is different.
         """
-        version = self.db.get_one("version", fail_on_empty=False, fail_on_more=False)
-        if not version:
-            # create user admin
-            self.create_admin()
-            # create database version
-            version_data = {
-                "_id": '1.0',                     # version text
-                "version": 1000,                  # version number
-                "date": "2018-04-12",             # version date
-                "description": "initial design",  # changes in this version
-                'status': 'ENABLED'               # ENABLED, DISABLED (migration in process), ERROR,
-            }
-            self.db.create("version", version_data)
-        elif version["_id"] != target_version:
-            # TODO implement migration process
-            raise EngineException("Wrong database version '{}'. Expected '{}'".format(
-                version["_id"], target_version), HTTPStatus.INTERNAL_SERVER_ERROR)
-        elif version["status"] != 'ENABLED':
+
+        version_data = self.db.get_one("admin", {"_id": "version"}, fail_on_empty=False, fail_on_more=True)
+        # check database status is ok
+        if version_data and version_data.get("status") != 'ENABLED':
             raise EngineException("Wrong database status '{}'".format(
-                version["status"]), HTTPStatus.INTERNAL_SERVER_ERROR)
+                version_data["status"]), HTTPStatus.INTERNAL_SERVER_ERROR)
+
+        # check version
+        db_version = None if not version_data else version_data.get("version")
+        if db_version != target_version:
+            self.upgrade_db(db_version, target_version)
+
+        # create user admin if not exist
+        self.create_admin()
         return

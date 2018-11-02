@@ -4,7 +4,7 @@
 from uuid import uuid4
 from http import HTTPStatus
 from time import time
-from copy import copy
+from copy import copy, deepcopy
 from validation import validate_input, ValidationError, ns_instantiate, ns_action, ns_scale
 from base_topic import BaseTopic, EngineException, get_iterable
 from descriptor_topics import DescriptorTopic
@@ -170,9 +170,7 @@ class NsrTopic(BaseTopic):
                     }
                     vnfr_descriptor["connection-point"].append(vnf_cp)
                 for vdu in vnfd["vdu"]:
-                    vdur_id = str(uuid4())
                     vdur = {
-                        "id": vdur_id,
                         "vdu-id-ref": vdu["id"],
                         # TODO      "name": ""     Name of the VDU in the VIM
                         "ip-address": None,  # mgmt-interface filled by LCM
@@ -180,6 +178,8 @@ class NsrTopic(BaseTopic):
                         "internal-connection-point": [],
                         "interfaces": [],
                     }
+                    if vdu.get("pdu-type"):
+                        vdur["pdu-type"] = vdu["pdu-type"]
                     # TODO volumes: name, volume-id
                     for icp in vdu.get("internal-connection-point", ()):
                         vdu_icp = {
@@ -196,8 +196,20 @@ class NsrTopic(BaseTopic):
                             # "ip-address", "mac-address" # filled by LCM
                             # vim-id  # TODO it would be nice having a vim port id
                         }
+                        if iface.get("mgmt-interface"):
+                            vdu_iface["mgmt-interface"] = True
+
                         vdur["interfaces"].append(vdu_iface)
-                    vnfr_descriptor["vdur"].append(vdur)
+                    count = vdu.get("count", 1)
+                    if count is None:
+                        count = 1
+                    count = int(count)    # TODO remove when descriptor serialized with payngbind
+                    for index in range(0, count):
+                        if index:
+                            vdur = deepcopy(vdur)
+                        vdur["_id"] = str(uuid4())
+                        vdur["count-index"] = index
+                        vnfr_descriptor["vdur"].append(vdur)
 
                 step = "creating vnfr vnfd-id='{}' constituent-vnfd='{}' at database".format(
                     member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
@@ -289,14 +301,62 @@ class NsLcmOpTopic(BaseTopic):
                 raise EngineException("Invalid parameter member_vnf_index='{}' is not one of the "
                                       "nsd:constituent-vnfd".format(member_vnf_index))
 
+        def _check_vnf_instantiation_params(in_vnfd, vnfd):
+
+            for in_vdu in get_iterable(in_vnfd.get("vdu")):
+                for vdu in get_iterable(vnfd.get("vdu")):
+                    if in_vdu["id"] == vdu["id"]:
+                        for volume in get_iterable(in_vdu.get("volume")):
+                            for volumed in get_iterable(vdu.get("volumes")):
+                                if volumed["name"] == volume["name"]:
+                                    break
+                            else:
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                      "volume:name='{}' is not present at vnfd:vdu:volumes list".
+                                                      format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                             volume["name"]))
+                        for in_iface in get_iterable(in_vdu["interface"]):
+                            for iface in get_iterable(vdu.get("interface")):
+                                if in_iface["name"] == iface["name"]:
+                                    break
+                            else:
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
+                                                      "interface[name='{}'] is not present at vnfd:vdu:interface"
+                                                      .format(in_vnf["member-vnf-index"], in_vdu["id"],
+                                                              in_iface["name"]))
+                        break
+                else:
+                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}'] is is not present "
+                                          "at vnfd:vdu".format(in_vnf["member-vnf-index"], in_vdu["id"]))
+
+            for in_ivld in get_iterable(in_vnfd.get("internal-vld")):
+                for ivld in get_iterable(vnfd.get("internal-vld")):
+                    if in_ivld["name"] == ivld["name"] or in_ivld["name"] == ivld["id"]:
+                        for in_icp in get_iterable(in_ivld["internal-connection-point"]):
+                            for icp in ivld["internal-connection-point"]:
+                                if in_icp["id-ref"] == icp["id-ref"]:
+                                    break
+                            else:
+                                raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld[name"
+                                                      "='{}']:internal-connection-point[id-ref:'{}'] is not present at "
+                                                      "vnfd:internal-vld:name/id:internal-connection-point"
+                                                      .format(in_vnf["member-vnf-index"], in_ivld["name"],
+                                                              in_icp["id-ref"], vnfd["id"]))
+                        break
+                else:
+                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld:name='{}'"
+                                          " is not present at vnfd '{}'".format(in_vnf["member-vnf-index"],
+                                                                                in_ivld["name"], vnfd["id"]))
+
         def check_valid_vim_account(vim_account):
             if vim_account in vim_accounts:
                 return
             try:
-                # TODO add _get_project_filter
-                self.db.get_one("vim_accounts", {"_id": vim_account})
+                db_filter = self._get_project_filter(session, write=False, show_all=True)
+                db_filter["_id"] = vim_account
+                self.db.get_one("vim_accounts", db_filter)
             except Exception:
-                raise EngineException("Invalid vimAccountId='{}' not present".format(vim_account))
+                raise EngineException("Invalid vimAccountId='{}' not present for the project".format(vim_account))
             vim_accounts.append(vim_account)
 
         if operation == "action":
@@ -341,35 +401,10 @@ class NsLcmOpTopic(BaseTopic):
             check_valid_vim_account(indata["vimAccountId"])
             for in_vnf in get_iterable(indata.get("vnf")):
                 vnfd = check_valid_vnf_member_index(in_vnf["member-vnf-index"])
+                _check_vnf_instantiation_params(in_vnf, vnfd)
                 if in_vnf.get("vimAccountId"):
                     check_valid_vim_account(in_vnf["vimAccountId"])
-                for in_vdu in get_iterable(in_vnf.get("vdu")):
-                    for vdud in get_iterable(vnfd.get("vdu")):
-                        if vdud["id"] == in_vdu["id"]:
-                            for volume in get_iterable(in_vdu.get("volume")):
-                                for volumed in get_iterable(vdud.get("volumes")):
-                                    if volumed["name"] == volume["name"]:
-                                        break
-                                else:
-                                    raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu[id='{}']:"
-                                                          "volume:name='{}' is not present at vnfd:vdu:volumes list".
-                                                          format(in_vnf["member-vnf-index"], in_vdu["id"],
-                                                                 volume["name"]))
-                            break
-                    else:
-                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:vdu:id='{}' is not "
-                                              "present at vnfd".format(in_vnf["member-vnf-index"], in_vdu["id"]))
 
-                for in_internal_vld in get_iterable(in_vnf.get("internal-vld")):
-                    for internal_vldd in get_iterable(vnfd.get("internal-vld")):
-                        if in_internal_vld["name"] == internal_vldd["name"] or \
-                                in_internal_vld["name"] == internal_vldd["id"]:
-                            break
-                    else:
-                        raise EngineException("Invalid parameter vnf[member-vnf-index='{}']:internal-vld:name='{}'"
-                                              " is not present at vnfd '{}'".format(in_vnf["member-vnf-index"],
-                                                                                    in_internal_vld["name"],
-                                                                                    vnfd["id"]))
             for in_vld in get_iterable(indata.get("vld")):
                 for vldd in get_iterable(nsd.get("vld")):
                     if in_vld["name"] == vldd["name"] or in_vld["name"] == vldd["id"]:
@@ -377,6 +412,107 @@ class NsLcmOpTopic(BaseTopic):
                 else:
                     raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
                         in_vld["name"]))
+
+    def _look_for_pdu(self, session, rollback, vnfr, vim_account):
+        """
+        Look for a free PDU in the catalog matching vdur type and interfaces. Fills vdur with ip_address information
+        :param vdur: vnfr:vdur descriptor. It is modified with pdu interface info if pdu is found
+        :param member_vnf_index: used just for logging. Target vnfd of nsd
+        :param vim_account:
+        :return: vder_update: dictionary to update vnfr:vdur with pdu info. In addition it modified choosen pdu to set
+        at status IN_USE
+        """
+        vnfr_update = {}
+        rollback_vnfr = {}
+        for vdur_index, vdur in enumerate(get_iterable(vnfr.get("vdur"))):
+            if not vdur.get("pdu-type"):
+                continue
+            pdu_type = vdur.get("pdu-type")
+            pdu_filter = self._get_project_filter(session, write=True, show_all=True)
+            pdu_filter["vim.vim_accounts"] = vim_account
+            pdu_filter["type"] = pdu_type
+            pdu_filter["_admin.operationalState"] = "ENABLED"
+            pdu_filter["_admin.usageSate"] = "NOT_IN_USE",
+            # TODO feature 1417: "shared": True,
+
+            available_pdus = self.db.get_list("pdus", pdu_filter)
+            for pdu in available_pdus:
+                # step 1 check if this pdu contains needed interfaces:
+                match_interfaces = True
+                for vdur_interface in vdur["interfaces"]:
+                    for pdu_interface in pdu["interfaces"]:
+                        if pdu_interface["name"] == vdur_interface["name"]:
+                            # TODO feature 1417: match per mgmt type
+                            break
+                    else:  # no interface found for name
+                        match_interfaces = False
+                        break
+                if match_interfaces:
+                    break
+            else:
+                raise EngineException(
+                    "No PDU of type={} found for member_vnf_index={} at vim_account={} matching interface "
+                    "names".format(vdur["vdu-id-ref"], vnfr["member-vnf-index-ref"], pdu_type))
+
+            # step 2. Update pdu
+            rollback_pdu = {
+                "_admin.usageState": pdu["_admin"]["usageState"],
+                "_admin.usage.vnfr_id": None,
+                "_admin.usage.nsr_id": None,
+                "_admin.usage.vdur": None,
+            }
+            self.db.set_one("pdus", {"_id": pdu["_id"]},
+                            {"_admin.usageSate": "IN_USE",
+                             "_admin.usage.vnfr_id": vnfr["_id"],
+                             "_admin.usage.nsr_id": vnfr["nsr-id-ref"],
+                             "_admin.usage.vdur": vdur["vdu-id-ref"]}
+                            )
+            rollback.append({"topic": "pdus", "_id": pdu["_id"], "operation": "set", "content": rollback_pdu})
+
+            # step 3. Fill vnfr info by filling vdur
+            vdu_text = "vdur.{}".format(vdur_index)
+            rollback_vnfr[vdu_text + ".pdu-id"] = None
+            vnfr_update[vdu_text + ".pdu-id"] = pdu["_id"]
+            for iface_index, vdur_interface in enumerate(vdur["interfaces"]):
+                for pdu_interface in pdu["interfaces"]:
+                    if pdu_interface["name"] == vdur_interface["name"]:
+                        iface_text = vdu_text + ".interfaces.{}".format(iface_index)
+                        for k, v in pdu_interface.items():
+                            vnfr_update[iface_text + ".{}".format(k)] = v
+                            rollback_vnfr[iface_text + ".{}".format(k)] = vdur_interface.get(v)
+                        break
+
+        if vnfr_update:
+            self.db.set_one("vnfrs", {"_id": vnfr["_id"]}, vnfr_update)
+            rollback.append({"topic": "vnfrs", "_id": vnfr["_id"], "operation": "set", "content": rollback_vnfr})
+        return
+
+    def _update_vnfrs(self, session, rollback, nsr, indata):
+        vnfrs = None
+        # get vnfr
+        nsr_id = nsr["_id"]
+        vnfrs = self.db.get_list("vnfrs", {"nsr-id-ref": nsr_id})
+
+        for vnfr in vnfrs:
+            vnfr_update = {}
+            vnfr_update_rollback = {}
+            member_vnf_index = vnfr["member-vnf-index-ref"]
+            # update vim-account-id
+
+            vim_account = indata["vimAccountId"]
+            # check instantiate parameters
+            for vnf_inst_params in get_iterable(indata.get("vnf")):
+                if vnf_inst_params["member-vnf-index"] != member_vnf_index:
+                    continue
+                if vnf_inst_params.get("vimAccountId"):
+                    vim_account = vnf_inst_params.get("vimAccountId")
+
+            vnfr_update["vim-account-id"] = vim_account
+            vnfr_update_rollback["vim-account-id"] = vnfr.get("vim-account-id")
+
+            # get pdu
+            self._look_for_pdu(session, rollback, vnfr, vim_account)
+            # TODO change instantiation parameters to set network
 
     def _create_nslcmop(self, session, nsInstanceId, operation, params):
         now = time()
@@ -438,6 +574,8 @@ class NsLcmOpTopic(BaseTopic):
                     raise EngineException("ns_instance '{}' cannot be '{}' because it is already instantiated".format(
                         nsInstanceId, operation), HTTPStatus.CONFLICT)
             self._check_ns_operation(session, nsr, operation, indata)
+            if operation == "instantiate":
+                self._update_vnfrs(session, rollback, nsr, indata)
             nslcmop_desc = self._create_nslcmop(session, nsInstanceId, operation, indata)
             self.format_on_new(nslcmop_desc, session["project_id"], make_public=make_public)
             _id = self.db.create("nslcmops", nslcmop_desc)

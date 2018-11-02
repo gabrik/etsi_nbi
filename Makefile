@@ -1,6 +1,6 @@
 
 clean:
-	rm -rf dist deb_dist .build osm_nbi-*.tar.gz osm_nbi.egg-info eggs
+	rm -rf dist deb_dist .build osm_nbi-*.tar.gz osm_nbi.egg-info .eggs
 
 package:
 	python3 setup.py --command-packages=stdeb.command sdist_dsc
