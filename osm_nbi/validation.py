@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from jsonschema import validate as js_v, exceptions as js_e
+from http import HTTPStatus
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.1"
@@ -426,18 +427,18 @@ pdu_interface = {
         "name": nameshort_schema,
         "mgmt": bool_schema,
         "type": {"enum": ["overlay", 'underlay']},
-        "ip_address": ip_schema,
+        "ip-address": ip_schema,
         # TODO, add user, password, ssh-key
-        "mac_address": mac_schema,
-        "vim_network_name": nameshort_schema,  # interface is connected to one vim network, or switch port
-        "vim_network_id": nameshort_schema,
-        # provide this in case SDN assist must deal with this interface
-        "switch_dpid": dpid_Schema,
-        "switch_port": nameshort_schema,
-        "switch_mac": nameshort_schema,
-        "switch_vlan": vlan_schema,
+        "mac-address": mac_schema,
+        "vim-network-name": nameshort_schema,  # interface is connected to one vim network, or switch port
+        # TODO "vim-network-id": nameshort_schema,
+        # # provide this in case SDN assist must deal with this interface
+        # "switch-dpid": dpid_Schema,
+        # "switch-port": nameshort_schema,
+        # "switch-mac": nameshort_schema,
+        # "switch-vlan": vlan_schema,
     },
-    "required": ["name", "mgmt", "ip_address"],
+    "required": ["name", "mgmt", "ip-address"],
     "additionalProperties": False
 }
 pdu_new_schema = {
@@ -453,7 +454,7 @@ pdu_new_schema = {
         "vim_accounts": nameshort_list_schema,
         "interfaces": {
             "type": "array",
-            "items": {"type": pdu_interface},
+            "items": pdu_interface,
             "minItems": 1
         }
     },
@@ -476,7 +477,7 @@ pdu_edit_schema = {
             array_edition_schema,
             {
                 "type": "array",
-                "items": {"type": pdu_interface},
+                "items": pdu_interface,
                 "minItems": 1
             }
         ]}
@@ -561,7 +562,9 @@ nbi_edit_input_schemas = {
 
 
 class ValidationError(Exception):
-    pass
+    def __init__(self, message, http_code=HTTPStatus.UNPROCESSABLE_ENTITY):
+        self.http_code = http_code
+        Exception.__init__(self, message)
 
 
 def validate_input(indata, schema_to_use):
@@ -581,3 +584,5 @@ def validate_input(indata, schema_to_use):
         else:
             error_pos = ""
         raise ValidationError("Format error {} '{}' ".format(error_pos, e.message))
+    except js_e.SchemaError:
+        raise ValidationError("Bad json schema {}".format(schema_to_use), http_code=HTTPStatus.INTERNAL_SERVER_ERROR)

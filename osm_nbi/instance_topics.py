@@ -66,7 +66,7 @@ class NsrTopic(BaseTopic):
         self.db.del_list("vnfrs", {"nsr-id-ref": _id})
         # set all used pdus as free
         self.db.set_list("pdus", {"_admin.usage.nsr_id": _id},
-                         {"_admin.usageSate": "NOT_IN_USE", "_admin.usage": None})
+                         {"_admin.usageState": "NOT_IN_USE", "_admin.usage": None})
         self._send_msg("deleted", {"_id": _id})
         return v
 
@@ -126,9 +126,15 @@ class NsrTopic(BaseTopic):
                 "id": nsr_id,
                 "_id": nsr_id,
                 # "input-parameter": xpath, value,
-                "ssh-authorized-key": ns_request.get("key-pair-ref"),
+                "ssh-authorized-key": ns_request.get("key-pair-ref"),  # TODO remove
             }
             ns_request["nsr_id"] = nsr_id
+            # Create vld
+            if nsd.get("vld"):
+                nsr_descriptor["vld"] = []
+                for nsd_vld in nsd.get("vld"):
+                    nsr_descriptor["vld"].append(
+                        {key: nsd_vld[key] for key in ("id", "vim-network-name") if key in nsd_vld})
 
             # Create VNFR
             needed_vnfds = {}
@@ -160,6 +166,15 @@ class NsrTopic(BaseTopic):
                     "connection-point": [],
                     "ip-address": None,  # mgmt-interface filled by LCM
                 }
+
+                # Create vld
+                if vnfd.get("internal-vld"):
+                    vnfr_descriptor["vld"] = []
+                    for vnfd_vld in vnfd.get("internal-vld"):
+                        vnfr_descriptor["vld"].append(
+                            {key: vnfd_vld[key] for key in ("id", "vim-network-name") if key in vnfd_vld})
+
+                vnfd_mgmt_cp = vnfd["mgmt-interface"].get("cp")
                 for cp in vnfd.get("connection-point", ()):
                     vnf_cp = {
                         "name": cp["name"],
@@ -196,8 +211,32 @@ class NsrTopic(BaseTopic):
                             # "ip-address", "mac-address" # filled by LCM
                             # vim-id  # TODO it would be nice having a vim port id
                         }
+                        if vnfd_mgmt_cp and iface.get("external-connection-point-ref") == vnfd_mgmt_cp:
+                            vdu_iface["mgmt-vnf"] = True
                         if iface.get("mgmt-interface"):
-                            vdu_iface["mgmt-interface"] = True
+                            vdu_iface["mgmt-interface"] = True  # TODO change to mgmt-vdu
+
+                        # look for network where this interface is connected
+                        if iface.get("external-connection-point-ref"):
+                            for nsd_vld in get_iterable(nsd.get("vld")):
+                                for nsd_vld_cp in get_iterable(nsd_vld.get("vnfd-connection-point-ref")):
+                                    if nsd_vld_cp.get("vnfd-connection-point-ref") == \
+                                            iface["external-connection-point-ref"] and \
+                                            nsd_vld_cp.get("member-vnf-index-ref") == member_vnf["member-vnf-index"]:
+                                        vdu_iface["ns-vld-id"] = nsd_vld["id"]
+                                        break
+                                else:
+                                    continue
+                                break
+                        elif iface.get("internal-connection-point-ref"):
+                            for vnfd_ivld in get_iterable(vnfd.get("internal-vld")):
+                                for vnfd_ivld_icp in get_iterable(vnfd_ivld.get("internal-connection-point")):
+                                    if vnfd_ivld_icp.get("id-ref") == iface["internal-connection-point-ref"]:
+                                        vdu_iface["vnf-vld-id"] = vnfd_ivld["id"]
+                                        break
+                                else:
+                                    continue
+                                break
 
                         vdur["interfaces"].append(vdu_iface)
                     count = vdu.get("count", 1)
@@ -413,26 +452,38 @@ class NsLcmOpTopic(BaseTopic):
                     raise EngineException("Invalid parameter vld:name='{}' is not present at nsd:vld".format(
                         in_vld["name"]))
 
-    def _look_for_pdu(self, session, rollback, vnfr, vim_account):
+    def _look_for_pdu(self, session, rollback, vnfr, vim_account, vnfr_update, vnfr_update_rollback):
         """
-        Look for a free PDU in the catalog matching vdur type and interfaces. Fills vdur with ip_address information
-        :param vdur: vnfr:vdur descriptor. It is modified with pdu interface info if pdu is found
-        :param member_vnf_index: used just for logging. Target vnfd of nsd
-        :param vim_account:
-        :return: vder_update: dictionary to update vnfr:vdur with pdu info. In addition it modified choosen pdu to set
-        at status IN_USE
+        Look for a free PDU in the catalog matching vdur type and interfaces. Fills vnfr.vdur with the interface
+        (ip_address, ...) information.
+        Modifies PDU _admin.usageState to 'IN_USE'
+        
+        :param session: client session information
+        :param rollback: list with the database modifications to rollback if needed
+        :param vnfr: vnfr to be updated. It is modified with pdu interface info if pdu is found
+        :param vim_account: vim_account where this vnfr should be deployed
+        :param vnfr_update: dictionary filled by this method with changes to be done at database vnfr
+        :param vnfr_update_rollback: dictionary filled by this method with original content of vnfr in case a rollback
+                                     of the changed vnfr is needed
+
+        :return: List of PDU interfaces that are connected to an existing VIM network. Each item contains:
+                 "vim-network-name": used at VIM
+                  "name": interface name
+                  "vnf-vld-id": internal VNFD vld where this interface is connected, or
+                  "ns-vld-id": NSD vld where this interface is connected.
+                  NOTE: One, and only one between 'vnf-vld-id' and 'ns-vld-id' contains a value. The other will be None
         """
-        vnfr_update = {}
-        rollback_vnfr = {}
+
+        ifaces_forcing_vim_network = []
         for vdur_index, vdur in enumerate(get_iterable(vnfr.get("vdur"))):
             if not vdur.get("pdu-type"):
                 continue
             pdu_type = vdur.get("pdu-type")
             pdu_filter = self._get_project_filter(session, write=True, show_all=True)
-            pdu_filter["vim.vim_accounts"] = vim_account
+            pdu_filter["vim_accounts"] = vim_account
             pdu_filter["type"] = pdu_type
             pdu_filter["_admin.operationalState"] = "ENABLED"
-            pdu_filter["_admin.usageSate"] = "NOT_IN_USE",
+            pdu_filter["_admin.usageState"] = "NOT_IN_USE"
             # TODO feature 1417: "shared": True,
 
             available_pdus = self.db.get_list("pdus", pdu_filter)
@@ -451,8 +502,8 @@ class NsLcmOpTopic(BaseTopic):
                     break
             else:
                 raise EngineException(
-                    "No PDU of type={} found for member_vnf_index={} at vim_account={} matching interface "
-                    "names".format(vdur["vdu-id-ref"], vnfr["member-vnf-index-ref"], pdu_type))
+                    "No PDU of type={} at vim_account={} found for member_vnf_index={}, vdu={} matching interface "
+                    "names".format(pdu_type, vim_account, vnfr["member-vnf-index-ref"], vdur["vdu-id-ref"]))
 
             # step 2. Update pdu
             rollback_pdu = {
@@ -462,7 +513,7 @@ class NsLcmOpTopic(BaseTopic):
                 "_admin.usage.vdur": None,
             }
             self.db.set_one("pdus", {"_id": pdu["_id"]},
-                            {"_admin.usageSate": "IN_USE",
+                            {"_admin.usageState": "IN_USE",
                              "_admin.usage.vnfr_id": vnfr["_id"],
                              "_admin.usage.nsr_id": vnfr["nsr-id-ref"],
                              "_admin.usage.vdur": vdur["vdu-id-ref"]}
@@ -471,21 +522,33 @@ class NsLcmOpTopic(BaseTopic):
 
             # step 3. Fill vnfr info by filling vdur
             vdu_text = "vdur.{}".format(vdur_index)
-            rollback_vnfr[vdu_text + ".pdu-id"] = None
+            vnfr_update_rollback[vdu_text + ".pdu-id"] = None
             vnfr_update[vdu_text + ".pdu-id"] = pdu["_id"]
             for iface_index, vdur_interface in enumerate(vdur["interfaces"]):
                 for pdu_interface in pdu["interfaces"]:
                     if pdu_interface["name"] == vdur_interface["name"]:
                         iface_text = vdu_text + ".interfaces.{}".format(iface_index)
                         for k, v in pdu_interface.items():
-                            vnfr_update[iface_text + ".{}".format(k)] = v
-                            rollback_vnfr[iface_text + ".{}".format(k)] = vdur_interface.get(v)
+                            if k in ("ip-address", "mac-address"):  # TODO: switch-xxxxx must be inserted
+                                vnfr_update[iface_text + ".{}".format(k)] = v
+                                vnfr_update_rollback[iface_text + ".{}".format(k)] = vdur_interface.get(v)
+                        if pdu_interface.get("ip-address"):
+                            if vdur_interface.get("mgmt-interface"):
+                                vnfr_update_rollback[vdu_text + ".ip-address"] = vdur.get("ip-address")
+                                vnfr_update[vdu_text + ".ip-address"] = pdu_interface["ip-address"]
+                            if vdur_interface.get("mgmt-vnf"):
+                                vnfr_update_rollback["ip-address"] = vnfr.get("ip-address")
+                                vnfr_update["ip-address"] = pdu_interface["ip-address"]
+                        if pdu_interface.get("vim-network-name"):  # or pdu_interface.get("vim-network-id"):
+                            ifaces_forcing_vim_network.append({
+                                # "vim-network-id": pdu_interface.get("vim-network-id"),
+                                "vim-network-name": pdu_interface.get("vim-network-name"),
+                                "name": vdur_interface.get("vnf-vld-id") or vdur_interface.get("ns-vld-id"),
+                                "vnf-vld-id": vdur_interface.get("vnf-vld-id"),
+                                "ns-vld-id": vdur_interface.get("ns-vld-id")})
                         break
 
-        if vnfr_update:
-            self.db.set_one("vnfrs", {"_id": vnfr["_id"]}, vnfr_update)
-            rollback.append({"topic": "vnfrs", "_id": vnfr["_id"], "operation": "set", "content": rollback_vnfr})
-        return
+        return ifaces_forcing_vim_network
 
     def _update_vnfrs(self, session, rollback, nsr, indata):
         vnfrs = None
@@ -511,10 +574,42 @@ class NsLcmOpTopic(BaseTopic):
             vnfr_update_rollback["vim-account-id"] = vnfr.get("vim-account-id")
 
             # get pdu
-            self._look_for_pdu(session, rollback, vnfr, vim_account)
-            # TODO change instantiation parameters to set network
+            ifaces_forcing_vim_network = self._look_for_pdu(session, rollback, vnfr, vim_account, vnfr_update,
+                                                            vnfr_update_rollback)
 
-    def _create_nslcmop(self, session, nsInstanceId, operation, params):
+            # updata database vnfr
+            self.db.set_one("vnfrs", {"_id": vnfr["_id"]}, vnfr_update)
+            rollback.append({"topic": "vnfrs", "_id": vnfr["_id"], "operation": "set", "content": vnfr_update_rollback})
+
+            # Update indada in case pdu forces to use a concrete vim-network-name
+            # TODO check if user has already insert a vim-network-name and raises an error
+            if not ifaces_forcing_vim_network:
+                continue
+            for iface_info in ifaces_forcing_vim_network:
+                if iface_info.get("ns-vld-id"):
+                    if "vld" not in indata:
+                        indata["vld"] = []
+                    indata["vld"].append({key: iface_info[key] for key in
+                                          ("name", "vim-network-name", "vim-network-id") if iface_info.get(key)})
+
+                elif iface_info.get("vnf-vld-id"):
+                    if "vnf" not in indata:
+                        indata["vnf"] = []
+                    indata["vnf"].append({
+                        "member-vnf-index": member_vnf_index,
+                        "internal-vld": [{key: iface_info[key] for key in
+                                          ("name", "vim-network-name", "vim-network-id") if iface_info.get(key)}]
+                    })
+
+    @staticmethod
+    def _create_nslcmop(nsr_id, operation, params):
+        """
+        Creates a ns-lcm-opp content to be stored at database.
+        :param nsr_id: internal id of the instance
+        :param operation: instantiate, terminate, scale, action, ...
+        :param params: user parameters for the operation
+        :return: dictionary following SOL005 format
+        """
         now = time()
         _id = str(uuid4())
         nslcmop = {
@@ -522,7 +617,7 @@ class NsLcmOpTopic(BaseTopic):
             "_id": _id,
             "operationState": "PROCESSING",  # COMPLETED,PARTIALLY_COMPLETED,FAILED_TEMP,FAILED,ROLLING_BACK,ROLLED_BACK
             "statusEnteredTime": now,
-            "nsInstanceId": nsInstanceId,
+            "nsInstanceId": nsr_id,
             "lcmOperationType": operation,
             "startTime": now,
             "isAutomaticInvocation": False,
@@ -530,7 +625,7 @@ class NsLcmOpTopic(BaseTopic):
             "isCancelPending": False,
             "links": {
                 "self": "/osm/nslcm/v1/ns_lcm_op_occs/" + _id,
-                "nsInstance": "/osm/nslcm/v1/ns_instances/" + nsInstanceId,
+                "nsInstance": "/osm/nslcm/v1/ns_instances/" + nsr_id,
             }
         }
         return nslcmop
@@ -574,9 +669,11 @@ class NsLcmOpTopic(BaseTopic):
                     raise EngineException("ns_instance '{}' cannot be '{}' because it is already instantiated".format(
                         nsInstanceId, operation), HTTPStatus.CONFLICT)
             self._check_ns_operation(session, nsr, operation, indata)
+
             if operation == "instantiate":
                 self._update_vnfrs(session, rollback, nsr, indata)
-            nslcmop_desc = self._create_nslcmop(session, nsInstanceId, operation, indata)
+
+            nslcmop_desc = self._create_nslcmop(nsInstanceId, operation, indata)
             self.format_on_new(nslcmop_desc, session["project_id"], make_public=make_public)
             _id = self.db.create("nslcmops", nslcmop_desc)
             rollback.append({"topic": "nslcmops", "_id": _id})

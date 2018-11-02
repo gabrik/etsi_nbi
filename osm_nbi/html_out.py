@@ -21,6 +21,7 @@ html_start = """
       <a href="https://osm.etsi.org"> <img src="/osm/static/OSM-logo.png" height="42" width="100"
         style="vertical-align:middle"> </a>
       <a>( {} )</a>
+      <a href="/osm/pdu/v1/pdu_descriptors">PDUs </a>
       <a href="/osm/vnfpkgm/v1/vnf_packages">VNFDs </a>
       <a href="/osm/nsd/v1/ns_descriptors">NSDs </a>
       <a href="/osm/nslcm/v1/ns_instances">NSs </a>

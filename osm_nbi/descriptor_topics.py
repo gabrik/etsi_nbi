@@ -52,7 +52,7 @@ class DescriptorTopic(BaseTopic):
         BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
         content["_admin"]["onboardingState"] = "CREATED"
         content["_admin"]["operationalState"] = "DISABLED"
-        content["_admin"]["usageSate"] = "NOT_IN_USE"
+        content["_admin"]["usageState"] = "NOT_IN_USE"
 
     def delete(self, session, _id, force=False, dry_run=False):
         """
@@ -401,6 +401,23 @@ class VnfdTopic(DescriptorTopic):
             clean_indata = clean_indata['vnfd:vnfd'][0]
         return clean_indata
 
+    def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
+        super().check_conflict_on_edit(session, final_content, edit_content, _id, force=force)
+
+        # set type of vnfd
+        contains_pdu = False
+        contains_vdu = False
+        for vdu in get_iterable(final_content.get("vdu")):
+            if vdu.get("pdu-type"):
+                contains_pdu = True
+            else:
+                contains_vdu = True
+        if contains_pdu:
+            final_content["_admin"]["type"] = "hnfd" if contains_vdu else "pnfd"
+        elif contains_vdu:
+            final_content["_admin"]["type"] = "vnfd"
+        # if neither vud nor pdu do not fill type
+
     def check_conflict_on_del(self, session, _id, force=False):
         """
         Check that there is not any NSD that uses this VNFD. Only NSDs belonging to this project are considered. Note
@@ -658,10 +675,10 @@ class PduTopic(BaseTopic):
 
     @staticmethod
     def format_on_new(content, project_id=None, make_public=False):
-        BaseTopic.format_on_new(content, project_id=None, make_public=make_public)
+        BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
         content["_admin"]["onboardingState"] = "CREATED"
-        content["_admin"]["operationalState"] = "DISABLED"
-        content["_admin"]["usageSate"] = "NOT_IN_USE"
+        content["_admin"]["operationalState"] = "ENABLED"
+        content["_admin"]["usageState"] = "NOT_IN_USE"
 
     def check_conflict_on_del(self, session, _id, force=False):
         if force:

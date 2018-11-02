@@ -14,6 +14,7 @@ import sys
 from authconn import AuthException
 from auth import Authenticator
 from engine import Engine, EngineException
+from validation import ValidationError
 from osm_common.dbbase import DbException
 from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
@@ -92,6 +93,10 @@ URL: /osm                                                       GET     POST    
 
 query string:
     Follows SOL005 section 4.3.2 It contains extra METHOD to override http method, FORCE to force.
+        simpleFilterExpr := <attrName>["."<attrName>]*["."<op>]"="<value>[","<value>]*
+        filterExpr := <simpleFilterExpr>["&"<simpleFilterExpr>]*
+        op := "eq" | "neq" (or "ne") | "gt" | "lt" | "gte" | "lte" | "cont" | "ncont"
+        attrName := string
     For filtering inside array, it must select the element of the array, or add ANYINDEX to apply the filtering over any
     item of the array, that is, pass if any item of the array pass the filter.
     It allows both ne and neq for not equal
@@ -188,7 +193,7 @@ class Server(object):
                                                "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
                                                },
                     "ns_descriptors": {"METHODS": ("GET", "POST"),
-                                       "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",
+                                       "<ID>": {"METHODS": ("GET", "DELETE", "PATCH"),
                                                 "nsd_content": {"METHODS": ("GET", "PUT")},
                                                 "nsd": {"METHODS": "GET"},  # descriptor inside package
                                                 "artifacts": {"*": {"METHODS": "GET"}}
@@ -601,7 +606,7 @@ class Server(object):
             if not main_topic or not version or not topic:
                 raise NbiException("URL must contain at least 'main_topic/version/topic'",
                                    HTTPStatus.METHOD_NOT_ALLOWED)
-            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm"):
+            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm", "pdu"):
                 raise NbiException("URL main_topic '{}' not supported".format(main_topic),
                                    HTTPStatus.METHOD_NOT_ALLOWED)
             if version != 'v1':
@@ -736,7 +741,8 @@ class Server(object):
                 raise NbiException("Method {} not allowed".format(method), HTTPStatus.METHOD_NOT_ALLOWED)
             return self._format_out(outdata, session, _format)
         except Exception as e:
-            if isinstance(e, (NbiException, EngineException, DbException, FsException, MsgException, AuthException)):
+            if isinstance(e, (NbiException, EngineException, DbException, FsException, MsgException, AuthException,
+                              ValidationError)):
                 http_code_value = cherrypy.response.status = e.http_code.value
                 http_code_name = e.http_code.name
                 cherrypy.log("Exception {}".format(e))

@@ -116,9 +116,14 @@ class TestRest:
         # contains ID of tests obtained from Location response header. "" key contains last obtained id
         self.test_ids = {}
         self.old_test_description = ""
+        self.test_name = None
+        self.step = 0
 
     def set_header(self, header):
         self.s.headers.update(header)
+
+    def set_tet_name(self, test_name):
+        self.test_name = test_name
 
     def unset_header(self, key):
         if key in self.s.headers:
@@ -240,6 +245,7 @@ class TestRest:
                 _id = location[location.rfind("/") + 1:]
                 if _id:
                     self.test_ids[name] = str(_id)
+                    self.test_ids["last_id"] = str(_id)  # last id
                     self.test_ids[""] = str(_id)  # last id
             return r
         except TestException as e:
@@ -587,6 +593,7 @@ class TestDeploy:
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
+        self.descriptor_edit = None
         self.uses_configuration = False
         self.uss = {}
         self.passwds = {}
@@ -595,12 +602,13 @@ class TestDeploy:
         self.timeout = 120
         self.passed_tests = 0
         self.total_tests = 0
+        self.qforce = ""
 
     def create_descriptors(self, engine):
         temp_dir = os.path.dirname(os.path.abspath(__file__)) + "/temp/"
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
-        for vnfd_filename in self.vnfd_filenames:
+        for vnfd_index, vnfd_filename in enumerate(self.vnfd_filenames):
             if "/" in vnfd_filename:
                 vnfd_filename_path = vnfd_filename
                 if not os.path.exists(vnfd_filename_path):
@@ -622,10 +630,11 @@ class TestDeploy:
                 # vnfd CREATE AND UPLOAD in one step:
                 test_name = "DEPLOY{}".format(self.step)
                 engine.test(test_name, "Onboard VNFD in one step", "POST",
-                            "/vnfpkgm/v1/vnf_packages_content", headers, "@b" + vnfd_filename_path, 201,
-                            {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, yaml)
+                            "/vnfpkgm/v1/vnf_packages_content" + self.qforce, headers, "@b" + vnfd_filename_path, 201,
+                            {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"},
+                            "yaml")
                 self.vnfds_test.append(test_name)
-                self.vnfds_id.append(engine.test_ids[test_name])
+                self.vnfds_id.append(engine.test_ids["last_id"])
                 self.step += 1
             else:
                 # vnfd CREATE AND UPLOAD ZIP
@@ -634,14 +643,22 @@ class TestDeploy:
                             headers_json, None, 201,
                             {"Location": "/vnfpkgm/v1/vnf_packages/", "Content-Type": "application/json"}, "json")
                 self.vnfds_test.append(test_name)
-                self.vnfds_id.append(engine.test_ids[test_name])
+                self.vnfds_id.append(engine.test_ids["last_id"])
                 self.step += 1
                 # location = r.headers["Location"]
                 # vnfd_id = location[location.rfind("/")+1:]
                 engine.test("DEPLOY{}".format(self.step), "Onboard VNFD step 2 as ZIP", "PUT",
-                            "/vnfpkgm/v1/vnf_packages/<>/package_content",
+                            "/vnfpkgm/v1/vnf_packages/<>/package_content" + self.qforce,
                             headers, "@b" + vnfd_filename_path, 204, None, 0)
                 self.step += 2
+
+            if self.descriptor_edit:
+                if "vnfd{}".format(vnfd_index) in self.descriptor_edit:
+                    # Modify VNFD
+                    engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
+                                "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfds_id[-1]),
+                                headers_yaml, self.descriptor_edit["vnfd{}".format(vnfd_index)], 204, None, None)
+                    self.step += 1
 
         if "/" in self.nsd_filename:
             nsd_filename_path = self.nsd_filename
@@ -665,32 +682,40 @@ class TestDeploy:
         if self.step % 2 == 0:
             # nsd CREATE AND UPLOAD in one step:
             engine.test("DEPLOY{}".format(self.step), "Onboard NSD in one step", "POST",
-                        "/nsd/v1/ns_descriptors_content", headers, "@b" + nsd_filename_path, 201,
+                        "/nsd/v1/ns_descriptors_content" + self.qforce, headers, "@b" + nsd_filename_path, 201,
                         {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, yaml)
             self.step += 1
+            self.nsd_id = engine.test_ids["last_id"]
         else:
             # nsd CREATE AND UPLOAD ZIP
             engine.test("DEPLOY{}".format(self.step), "Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors",
                         headers_json, None, 201,
                         {"Location": "/nsd/v1/ns_descriptors/", "Content-Type": "application/json"}, "json")
             self.step += 1
+            self.nsd_id = engine.test_ids["last_id"]
             # location = r.headers["Location"]
             # vnfd_id = location[location.rfind("/")+1:]
             engine.test("DEPLOY{}".format(self.step), "Onboard NSD step 2 as ZIP", "PUT",
-                        "/nsd/v1/ns_descriptors/<>/nsd_content",
+                        "/nsd/v1/ns_descriptors/<>/nsd_content" + self.qforce,
                         headers, "@b" + nsd_filename_path, 204, None, 0)
             self.step += 2
-        self.nsd_id = engine.test_ids[self.nsd_test]
+
+        if self.descriptor_edit and "nsd" in self.descriptor_edit:
+            # Modify NSD
+            engine.test("DEPLOY{}".format(self.step), "Edit NSD ", "PATCH",
+                        "/nsd/v1/ns_descriptors/{}".format(self.nsd_id),
+                        headers_yaml, self.descriptor_edit["nsd"], 204, None, None)
+            self.step += 1
 
     def delete_descriptors(self, engine):
         # delete descriptors
         engine.test("DEPLOY{}".format(self.step), "Delete NSSD SOL005", "DELETE",
-                    "/nsd/v1/ns_descriptors/<{}>".format(self.nsd_test),
+                    "/nsd/v1/ns_descriptors/{}".format(self.nsd_id),
                     headers_yaml, None, 204, None, 0)
         self.step += 1
-        for vnfd_test in self.vnfds_test:
+        for vnfd_id in self.vnfds_id:
             engine.test("DEPLOY{}".format(self.step), "Delete VNFD SOL005", "DELETE",
-                        "/vnfpkgm/v1/vnf_packages/<{}>".format(vnfd_test), headers_yaml, None, 204, None, 0)
+                        "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id), headers_yaml, None, 204, None, 0)
             self.step += 1
 
     def instantiate(self, engine, ns_data):
@@ -700,8 +725,7 @@ class TestDeploy:
                         headers_yaml, ns_data_text, 201,
                         {"Location": "nslcm/v1/ns_instances/", "Content-Type": "application/yaml"}, "yaml")
         self.ns_test = "DEPLOY{}".format(self.step)
-        self.ns_id = engine.test_ids[self.ns_test]
-        engine.test_ids[self.ns_test]
+        self.ns_id = engine.test_ids["last_id"]
         self.step += 1
         r = engine.test("DEPLOY{}".format(self.step), "Instantiate NS step 2", "POST",
                         "/nslcm/v1/ns_instances/<{}>/instantiate".format(self.ns_test), headers_yaml, ns_data_text,
@@ -835,8 +859,8 @@ class TestDeploy:
             from pssh.utils import load_private_key
             from ssh2 import exceptions as ssh2Exception
         except ImportError as e:
-            logger.critical("package <pssh> or/and <urllib3> is not installed. Please add it with 'pip3 install "
-                            "parallel-ssh' and/or 'pip3 install urllib3': {}".format(e))
+            logger.critical("Package <pssh> or/and <urllib3> is not installed. Please add them with 'pip3 install "
+                            "parallel-ssh urllib3': {}".format(e))
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         try:
             p_host = os.environ.get("PROXY_HOST")
@@ -892,7 +916,7 @@ class TestDeploy:
 
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
-        else:
+        elif test_osm:
             self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
         self.aditional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
@@ -1189,7 +1213,7 @@ class TestDeployHackfest3Charmed(TestDeploy):
         if manual_check:
             input('NS service primitive has been executed. Check that file /home/ubuntu/OSMTESTNBI is present at '
                   'TODO_PUT_IP')
-        else:
+        elif test_osm:
             cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/OSMTESTNBI', ]}
             uss = {'1': "ubuntu", '2': "ubuntu"}
             pss = {'1': "osm4u", '2': "osm4u"}
@@ -1218,6 +1242,234 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # if manual_check:
         #     input('NS scale in done. Check that file /home/ubuntu/touched is updated and new VM is deleted')
         # # TODO check automatic
+
+
+class TestDeploySingleVdu(TestDeployHackfest3Charmed):
+    description = "Generate a single VDU base on editing Hackfest3Charmed descriptors and deploy"
+
+    def __init__(self):
+        super().__init__()
+        self.qforce = "?FORCE=True"
+        self.descriptor_edit = {
+            # Modify VNFD to remove one VDU
+            "vnfd0": {
+                "vdu": {
+                    "$[0]": {
+                        "interface": {"$[0]": {"external-connection-point-ref": "pdu-mgmt"}}
+                    },
+                    "$[1]": None
+                },
+                "vnf-configuration": None,
+                "connection-point": {
+                    "$[0]": {
+                        "id": "pdu-mgmt",
+                        "name": "pdu-mgmt",
+                        "short-name": "pdu-mgmt"
+                    },
+                    "$[1]": None
+                },
+                "mgmt-interface": {"cp": "pdu-mgmt"},
+                "description": "A vnf single vdu to be used as PDU",
+                "id": "vdu-as-pdu",
+                "internal-vld": {
+                    "$[0]": {
+                        "id": "pdu_internal",
+                        "name": "pdu_internal",
+                        "internal-connection-point": {"$[1]": None},
+                        "short-name": "pdu_internal",
+                        "type": "ELAN"
+                    }
+                }
+            },
+
+            # Modify NSD accordingly
+            "nsd": {
+                "constituent-vnfd": {
+                    "$[0]": {"vnfd-id-ref": "vdu-as-pdu"},
+                    "$[1]": None,
+                },
+                "description": "A nsd to deploy the vnf to act as as PDU",
+                "id": "nsd-as-pdu",
+                "name": "nsd-as-pdu",
+                "short-name": "nsd-as-pdu",
+                "vld": {
+                    "$[0]": {
+                        "id": "mgmt_pdu",
+                        "name": "mgmt_pdu",
+                        "short-name": "mgmt_pdu",
+                        "vnfd-connection-point-ref": {
+                            "$[0]": {
+                                "vnfd-connection-point-ref": "pdu-mgmt",
+                                "vnfd-id-ref": "vdu-as-pdu",
+                            },
+                            "$[1]": None
+                        },
+                        "type": "ELAN"
+                    },
+                    "$[1]": None,
+                }
+            }
+        }
+
+
+class TestDeployHnfd(TestDeployHackfest3Charmed):
+    description = "Generate a HNFD base on editing Hackfest3Charmed descriptors and deploy"
+
+    def __init__(self):
+        super().__init__()
+        self.pduDeploy = TestDeploySingleVdu()
+        self.pdu_interface_0 = {}
+        self.pdu_interface_1 = {}
+
+        self.pdu_id = None
+        # self.vnf_to_pdu = """
+        #     vdu:
+        #         "$[0]":
+        #             pdu-type: PDU-TYPE-1
+        #             interface:
+        #                 "$[0]":
+        #                     name: mgmt-iface
+        #                 "$[1]":
+        #                     name: pdu-iface-internal
+        #     id: hfn1
+        #     description: HFND, one PDU + One VDU
+        #     name: hfn1
+        #     short-name: hfn1
+        #
+        # """
+
+        self.pdu_descriptor = {
+            "name": "my-PDU",
+            "type": "PDU-TYPE-1",
+            "vim_accounts": "to-override",
+            "interfaces": [
+                {
+                    "name": "mgmt-iface",
+                    "mgmt": True,
+                    "type": "overlay",
+                    "ip-address": "to override",
+                    "mac-address": "mac_address",
+                    "vim-network-name": "mgmt",
+                },
+                {
+                    "name": "pdu-iface-internal",
+                    "mgmt": False,
+                    "type": "overlay",
+                    "ip-address": "to override",
+                    "mac-address": "mac_address",
+                    "vim-network-name": "pdu_internal",  # OSMNBITEST-PDU-pdu_internal
+                },
+            ]
+        }
+        self.vnfd_filenames = ("hackfest_3charmed_vnfd.tar.gz", "hackfest_3charmed_vnfd.tar.gz")
+
+        self.descriptor_edit = {
+            "vnfd0": {
+                "id": "hfnd1",
+                "name": "hfn1",
+                "short-name": "hfn1",
+                "vdu": {
+                    "$[0]": {
+                        "pdu-type": "PDU-TYPE-1",
+                        "interface": {
+                            "$[0]": {"name": "mgmt-iface"},
+                            "$[1]": {"name": "pdu-iface-internal"},
+                        }
+                    }
+                }
+            },
+            "nsd": {
+                "constituent-vnfd": {
+                    "$[1]": {"vnfd-id-ref": "hfnd1"}
+                }
+            }
+        }
+
+    def create_descriptors(self, engine):
+        super().create_descriptors(engine)
+
+        # Create PDU
+        self.pdu_descriptor["interfaces"][0].update(self.pdu_interface_0)
+        self.pdu_descriptor["interfaces"][1].update(self.pdu_interface_1)
+        self.pdu_descriptor["vim_accounts"] = [self.vim_id]
+        # TODO get vim-network-name from vnfr.vld.name
+        self.pdu_descriptor["interfaces"][1]["vim-network-name"] = "{}-{}-{}".format(
+            os.environ.get("OSMNBITEST_NS_NAME", "OSMNBITEST"),
+            "PDU", self.pdu_descriptor["interfaces"][1]["vim-network-name"])
+        test_name = "DEPLOY{}".format(self.step)
+        engine.test(test_name, "Onboard PDU descriptor", "POST", "/pdu/v1/pdu_descriptors",
+                    {"Location": "/pdu/v1/pdu_descriptors/", "Content-Type": "application/yaml"}, self.pdu_descriptor,
+                    201, r_header_yaml, "yaml")
+        self.pdu_id = engine.test_ids["last_id"]
+        self.step += 1
+
+    def run(self, engine, test_osm, manual_check, test_params=None):
+        engine.get_autorization()
+        nsname = os.environ.get("OSMNBITEST_NS_NAME", "OSMNBITEST")
+
+        # create real VIM if not exist
+        self.vim_id = engine.get_create_vim(test_osm)
+        # instanciate PDU
+        self.pduDeploy.create_descriptors(engine)
+        self.pduDeploy.instantiate(engine, {"nsDescription": "to be used as PDU", "nsName": nsname + "-PDU",
+                                            "nsdId": self.pduDeploy.nsd_id, "vimAccountId": self.vim_id})
+        if manual_check:
+            input('VNF to be used as PDU has been deployed. Perform manual check and press enter to resume')
+        elif test_osm:
+            self.pduDeploy.test_ns(engine, test_osm, self.pduDeploy.cmds, self.pduDeploy.uss, self.pduDeploy.pss,
+                                   self.pduDeploy.keys, self.pduDeploy.timeout)
+
+        if test_osm:
+            r = engine.test("DEPLOY{}".format(self.step), "GET IP_ADDRESS OF VNFR", "GET",
+                            "/nslcm/v1/vnfrs?nsr-id-ref={}".format(self.pduDeploy.ns_id), headers_json, None,
+                            200, r_header_json, "json")
+            self.step += 1
+            vnfr_data = r.json()
+            # print(vnfr_data)
+
+            self.pdu_interface_0["ip-address"] = vnfr_data[0]["vdur"][0]["interfaces"][0].get("ip-address")
+            self.pdu_interface_1["ip-address"] = vnfr_data[0]["vdur"][0]["interfaces"][1].get("ip-address")
+            self.pdu_interface_0["mac-address"] = vnfr_data[0]["vdur"][0]["interfaces"][0].get("mac-address")
+            self.pdu_interface_1["mac-address"] = vnfr_data[0]["vdur"][0]["interfaces"][1].get("mac-address")
+            if not self.pdu_interface_0["ip-address"]:
+                raise TestException("Vnfr has not managment ip address")
+        else:
+            self.pdu_interface_0["ip-address"] = "192.168.10.10"
+            self.pdu_interface_1["ip-address"] = "192.168.11.10"
+            self.pdu_interface_0["mac-address"] = "52:33:44:55:66:13"
+            self.pdu_interface_1["mac-address"] = "52:33:44:55:66:14"
+
+        self.create_descriptors(engine)
+
+        ns_data = {"nsDescription": "default description", "nsName": nsname, "nsdId": self.nsd_id,
+                   "vimAccountId": self.vim_id}
+        if test_params and test_params.get("ns-config"):
+            if isinstance(test_params["ns-config"], str):
+                ns_data.update(yaml.load(test_params["ns-config"]))
+            else:
+                ns_data.update(test_params["ns-config"])
+
+        self.instantiate(engine, ns_data)
+        if manual_check:
+            input('NS has been deployed. Perform manual check and press enter to resume')
+        elif test_osm:
+            self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
+        self.aditional_operations(engine, test_osm, manual_check)
+        self.terminate(engine)
+        self.pduDeploy.terminate(engine)
+        self.delete_descriptors(engine)
+        self.pduDeploy.delete_descriptors(engine)
+
+        self.step += 1
+
+        self.print_results()
+
+    def delete_descriptors(self, engine):
+        super().delete_descriptors(engine)
+        # delete pdu
+        engine.test("DEPLOY{}".format(self.step), "Delete PDU SOL005", "DELETE",
+                    "/pdu/v1/pdu_descriptors/{}".format(self.pdu_id),
+                    headers_yaml, None, 204, None, 0)
 
 
 class TestDescriptors:
@@ -1256,7 +1508,7 @@ class TestDescriptors:
         engine.test(test_name, "Onboard VNFD in one step", "POST",
                     "/vnfpkgm/v1/vnf_packages_content", headers_zip_yaml, "@b" + vnfd_filename_path, 201,
                     {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, "yaml")
-        self.vnfd_id = engine.test_ids[test_name]
+        self.vnfd_id = engine.test_ids["last_id"]
         self.step += 1
 
         # get vnfd descriptor
@@ -1290,7 +1542,7 @@ class TestDescriptors:
         engine.test(test_name, "Onboard NSD in one step", "POST",
                     "/nsd/v1/ns_descriptors_content", headers_zip_yaml, "@b" + nsd_filename_path, 201,
                     {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, "yaml")
-        self.nsd_id = engine.test_ids[test_name]
+        self.nsd_id = engine.test_ids["last_id"]
         self.step += 1
 
         # get nsd descriptor
@@ -1368,6 +1620,8 @@ if __name__ == "__main__":
             "TestDescriptors": TestDescriptors,
             "TestDeployHackfest1": TestDeployHackfest1,
             # "Deploy-MultiVIM": TestDeployMultiVIM,
+            "DeploySingleVdu": TestDeploySingleVdu,
+            "DeployHnfd": TestDeployHnfd,
         }
         test_to_do = []
         test_params = {}
