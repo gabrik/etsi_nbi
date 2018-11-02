@@ -25,6 +25,8 @@ null_schema = {"type": "null"}
 id_schema = {"type": "string", "pattern": "^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$"}
 time_schema = {"type": "string", "pattern": "^[0-9]{4}-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]([0-5]:){2}"}
 pci_schema = {"type": "string", "pattern": "^[0-9a-fA-F]{4}(:[0-9a-fA-F]{2}){2}\\.[0-9a-fA-F]$"}
+# allows [] for wildcards. For that reason huge length limit is set
+pci_extended_schema = {"type": "string", "pattern": "^[0-9a-fA-F.:-\\[\\]]{12,40}$"}
 http_schema = {"type": "string", "pattern": "^https?://[^'\"=]+$"}
 bandwidth_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]bps)?$"}
 memory_schema = {"type": "string", "pattern": "^[0-9]+ *([MG]i?[Bb])?$"}
@@ -394,7 +396,7 @@ sdn_port_mapping_schema = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "pci": pci_schema,
+                        "pci": pci_extended_schema,
                         "switch_port": nameshort_schema,
                         "switch_mac": mac_schema
                     },
