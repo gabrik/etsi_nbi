@@ -132,7 +132,7 @@ class NsrTopic(BaseTopic):
 
             # Create VNFR
             needed_vnfds = {}
-            for member_vnf in nsd["constituent-vnfd"]:
+            for member_vnf in nsd.get("constituent-vnfd", ()):
                 vnfd_id = member_vnf["vnfd-id-ref"]
                 step = "getting vnfd id='{}' constituent-vnfd='{}' from database".format(
                     member_vnf["vnfd-id-ref"], member_vnf["member-vnf-index"])
