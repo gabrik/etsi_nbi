@@ -23,17 +23,29 @@ class DescriptorTopic(BaseTopic):
         BaseTopic.__init__(self, db, fs, msg)
 
     def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
-        # check that this id is not present
-        _filter = {"id": final_content["id"]}
-        if _id:
-            _filter["_id.neq"] = _id
+        # 1. validate again with pyangbind
+        # 1.1. remove internal keys
+        internal_keys = {}
+        for k in ("_id", "_admin"):
+            if k in final_content:
+                internal_keys[k] = final_content.pop(k)
+        serialized = self._validate_input_new(final_content, force)
+        # 1.2. modify final_content with a serialized version
+        final_content.clear()
+        final_content.update(serialized)
+        # 1.3. restore internal keys
+        for k, v in internal_keys.items():
+            final_content[k] = v
 
-        _filter.update(self._get_project_filter(session, write=False, show_all=False))
-        if self.db.get_one(self.topic, _filter, fail_on_empty=False):
-            raise EngineException("{} with id '{}' already exists for this project".format(self.topic[:-1],
-                                                                                           final_content["id"]),
-                                  HTTPStatus.CONFLICT)
-        # TODO validate with pyangbind. Load and dumps to convert data types
+        # 2. check that this id is not present
+        if "id" in edit_content:
+            _filter = self._get_project_filter(session, write=False, show_all=False)
+            _filter["id"] = final_content["id"]
+            _filter["_id.neq"] = _id
+            if self.db.get_one(self.topic, _filter, fail_on_empty=False):
+                raise EngineException("{} with id '{}' already exists for this project".format(self.topic[:-1],
+                                                                                               final_content["id"]),
+                                      HTTPStatus.CONFLICT)
 
     @staticmethod
     def format_on_new(content, project_id=None, make_public=False):
@@ -418,7 +430,6 @@ class VnfdTopic(DescriptorTopic):
             raise EngineException("There is soame NSD that depends on this VNFD", http_code=HTTPStatus.CONFLICT)
 
     def _validate_input_new(self, indata, force=False):
-        # TODO validate with pyangbind, serialize
         indata = self.pyangbind_validation("vnfds", indata, force)
         # Cross references validation in the descriptor
         if not indata.get("mgmt-interface"):
@@ -551,10 +562,11 @@ class VnfdTopic(DescriptorTopic):
                                           "vnf-configuration:config-primitive:name"
                                           .format(sgd["name"], sca["vnf-config-primitive-name-ref"]),
                                           http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+        # TODO validata that if contains cloud-init-file or charms, have artifacts _admin.storage."pkg-dir" is not none
         return indata
 
     def _validate_input_edit(self, indata, force=False):
-        # TODO validate with pyangbind, serialize
+        # not needed to validate with pyangbind becuase it will be validated at check_conflict_on_edit
         return indata
 
 
@@ -586,13 +598,12 @@ class NsdTopic(DescriptorTopic):
         return clean_indata
 
     def _validate_input_new(self, indata, force=False):
-
-        # TODO validate with pyangbind, serialize
         indata = self.pyangbind_validation("nsds", indata, force)
+        # TODO validata that if contains cloud-init-file or charms, have artifacts _admin.storage."pkg-dir" is not none
         return indata
 
     def _validate_input_edit(self, indata, force=False):
-        # TODO validate with pyangbind, serialize
+        # not needed to validate with pyangbind becuase it will be validated at check_conflict_on_edit
         return indata
 
     def _check_descriptor_dependencies(self, session, descriptor):
@@ -615,7 +626,8 @@ class NsdTopic(DescriptorTopic):
     def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
         super().check_conflict_on_edit(session, final_content, edit_content, _id, force=force)
 
-        self._check_descriptor_dependencies(session, final_content)
+        if not force:
+            self._check_descriptor_dependencies(session, final_content)
 
     def check_conflict_on_del(self, session, _id, force=False):
         """

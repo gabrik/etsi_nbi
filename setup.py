@@ -27,6 +27,7 @@ setup(
 
     packages=[_name],
     include_package_data=True,
+    # exclude_package_data={'': ['osm_nbi/local', 'temp']},
     data_files=[('/etc/osm/', ['osm_nbi/nbi.cfg']),
                 ('/etc/systemd/system/', ['osm_nbi/osm-nbi.service']),
                 ],
