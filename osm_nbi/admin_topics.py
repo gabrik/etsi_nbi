@@ -128,6 +128,7 @@ class VimAccountTopic(BaseTopic):
     topic_msg = "vim_account"
     schema_new = vim_account_new_schema
     schema_edit = vim_account_edit_schema
+    vim_config_encrypted = ("admin_password", "nsx_password", "vcenter_password")
 
     def __init__(self, db, fs, msg):
         BaseTopic.__init__(self, db, fs, msg)
@@ -136,12 +137,35 @@ class VimAccountTopic(BaseTopic):
         self.check_unique_name(session, indata["name"], _id=None)
 
     def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
-        if edit_content.get("name"):
+        if not force and edit_content.get("name"):
             self.check_unique_name(session, edit_content["name"], _id=_id)
 
-    @staticmethod
-    def format_on_new(content, project_id=None, make_public=False):
-        BaseTopic.format_on_new(content, project_id=project_id, make_public=False)
+        # encrypt passwords
+        schema_version = final_content.get("schema_version")
+        if schema_version:
+            if edit_content.get("vim_password"):
+                final_content["vim_password"] = self.db.encrypt(edit_content["vim_password"],
+                                                                schema_version=schema_version, salt=_id)
+            if edit_content.get("config"):
+                for p in self.vim_config_encrypted:
+                    if edit_content["config"].get(p):
+                        final_content["config"][p] = self.db.encrypt(edit_content["config"][p],
+                                                                     schema_version=schema_version, salt=_id)
+
+    def format_on_new(self, content, project_id=None, make_public=False):
+        BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
+        content["schema_version"] = schema_version = "1.1"
+
+        # encrypt passwords
+        if content.get("vim_password"):
+            content["vim_password"] = self.db.encrypt(content["vim_password"], schema_version=schema_version,
+                                                      salt=content["_id"])
+        if content.get("config"):
+            for p in self.vim_config_encrypted:
+                if content["config"].get(p):
+                    content["config"][p] = self.db.encrypt(content["config"][p], schema_version=schema_version,
+                                                           salt=content["_id"])
+
         content["_admin"]["operationalState"] = "PROCESSING"
 
     def delete(self, session, _id, force=False, dry_run=False):
@@ -176,12 +200,23 @@ class SdnTopic(BaseTopic):
         self.check_unique_name(session, indata["name"], _id=None)
 
     def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
-        if edit_content.get("name"):
+        if not force and edit_content.get("name"):
             self.check_unique_name(session, edit_content["name"], _id=_id)
 
-    @staticmethod
-    def format_on_new(content, project_id=None, make_public=False):
-        BaseTopic.format_on_new(content, project_id=project_id, make_public=False)
+        # encrypt passwords
+        schema_version = final_content.get("schema_version")
+        if schema_version and edit_content.get("password"):
+            final_content["password"] = self.db.encrypt(edit_content["password"], schema_version=schema_version,
+                                                        salt=_id)
+
+    def format_on_new(self, content, project_id=None, make_public=False):
+        BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
+        content["schema_version"] = schema_version = "1.1"
+        # encrypt passwords
+        if content.get("password"):
+            content["password"] = self.db.encrypt(content["password"], schema_version=schema_version,
+                                                  salt=content["_id"])
+
         content["_admin"]["operationalState"] = "PROCESSING"
 
     def delete(self, session, _id, force=False, dry_run=False):

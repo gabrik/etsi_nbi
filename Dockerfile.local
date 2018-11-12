@@ -56,7 +56,7 @@ ENV OSMNBI_DATABASE_HOST                        mongo
 ENV OSMNBI_DATABASE_PORT                        27017
 # ENV OSMNBI_DATABASE_USER                      xxx
 # ENV OSMNBI_DATABASE_PASSWORD                  xxx
-# ENV OSMNBI_DATABASE_MASTERPASSWORD            xxx
+# ENV OSMNBI_DATABASE_COMMONKEY                 xxx
 # web
 ENV OSMNBI_STATIC_DIR                           /app/osm_nbi/html_public
 # logs
@@ -67,7 +67,7 @@ ENV OSMNBI_MESSAGE_DRIVER                       kafka
 ENV OSMNBI_MESSAGE_HOST                         kafka
 ENV OSMNBI_MESSAGE_PORT                         9092
 # logs
-ENV OSMNBI_LOG_FILE                             /app/log/nbi.log
+# ENV OSMNBI_LOG_FILE                             /app/log/nbi.log
 ENV OSMNBI_LOG_LEVEL                            DEBUG
 # authentication
 ENV OSMNBI_AUTHENTICATION_BACKEND               internal
