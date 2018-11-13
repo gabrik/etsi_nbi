@@ -169,7 +169,7 @@ class NsrTopic(BaseTopic):
                         # vim-id  # TODO it would be nice having a vim port id
                     }
                     vnfr_descriptor["connection-point"].append(vnf_cp)
-                for vdu in vnfd["vdu"]:
+                for vdu in vnfd.get("vdu", ()):
                     vdur = {
                         "vdu-id-ref": vdu["id"],
                         # TODO      "name": ""     Name of the VDU in the VIM

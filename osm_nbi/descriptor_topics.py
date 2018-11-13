@@ -432,17 +432,18 @@ class VnfdTopic(DescriptorTopic):
     def _validate_input_new(self, indata, force=False):
         indata = self.pyangbind_validation("vnfds", indata, force)
         # Cross references validation in the descriptor
-        if not indata.get("mgmt-interface"):
-            raise EngineException("'mgmt-interface' is a mandatory field and it is not defined",
-                                  http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
-        if indata["mgmt-interface"].get("cp"):
-            for cp in get_iterable(indata.get("connection-point")):
-                if cp["name"] == indata["mgmt-interface"]["cp"]:
-                    break
-            else:
-                raise EngineException("mgmt-interface:cp='{}' must match an existing connection-point"
-                                      .format(indata["mgmt-interface"]["cp"]),
+        if indata.get("vdu"):
+            if not indata.get("mgmt-interface"):
+                raise EngineException("'mgmt-interface' is a mandatory field and it is not defined",
                                       http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+            if indata["mgmt-interface"].get("cp"):
+                for cp in get_iterable(indata.get("connection-point")):
+                    if cp["name"] == indata["mgmt-interface"]["cp"]:
+                        break
+                else:
+                    raise EngineException("mgmt-interface:cp='{}' must match an existing connection-point"
+                                          .format(indata["mgmt-interface"]["cp"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
         for vdu in get_iterable(indata.get("vdu")):
             for interface in get_iterable(vdu.get("interface")):
