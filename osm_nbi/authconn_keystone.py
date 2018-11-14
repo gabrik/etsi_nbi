@@ -5,6 +5,7 @@ AuthconnKeystone implements implements the connector for
 Openstack Keystone and leverages the RBAC model, to bring
 it for OSM.
 """
+import time
 
 __author__ = "Eduardo Sousa <esousa@whitestack.com>"
 __date__ = "$27-jul-2018 23:59:59$"
@@ -12,9 +13,11 @@ __date__ = "$27-jul-2018 23:59:59$"
 from authconn import Authconn, AuthException, AuthconnOperationException
 
 import logging
+import requests
 from keystoneauth1 import session
 from keystoneauth1.identity import v3
 from keystoneauth1.exceptions.base import ClientException
+from keystoneauth1.exceptions.http import Conflict
 from keystoneclient.v3 import client
 from http import HTTPStatus
 
@@ -31,6 +34,19 @@ class AuthconnKeystone(Authconn):
         self.admin_username = config.get("service_username", "nbi")
         self.admin_password = config.get("service_password", "nbi")
         self.project_domain_name = config.get("project_domain_name", "default")
+
+        # Waiting for Keystone to be up
+        available = None
+        counter = 300
+        while available is None:
+            time.sleep(1)
+            try:
+                result = requests.get(self.auth_url)
+                available = True if result.status_code == 200 else None
+            except Exception:
+                counter -= 1
+                if counter == 0:
+                    raise AuthException("Keystone not available after 300s timeout")
 
         self.auth = v3.Password(user_domain_name=self.user_domain_name,
                                 username=self.admin_username,
@@ -80,14 +96,14 @@ class AuthconnKeystone(Authconn):
             projects = self.keystone.projects.list(user=token_info["user"]["id"])
             project_names = [project.name for project in projects]
 
-            token = self.keystone.get_raw_token_from_identity_service(
+            new_token = self.keystone.get_raw_token_from_identity_service(
                 auth_url=self.auth_url,
                 token=token,
                 project_name=project,
                 user_domain_name=self.user_domain_name,
                 project_domain_name=self.project_domain_name)
 
-            return token["auth_token"], project_names
+            return new_token["auth_token"], project_names
         except ClientException:
             self.logger.exception("Error during user authentication using keystone. Method: bearer")
             raise AuthException("Error during user authentication using Keystone", http_code=HTTPStatus.UNAUTHORIZED)
@@ -118,6 +134,7 @@ class AuthconnKeystone(Authconn):
         :param token: token to be revoked
         """
         try:
+            self.logger.info("Revoking token: " + token)
             self.keystone.tokens.revoke_token(token=token)
 
             return True
@@ -152,7 +169,9 @@ class AuthconnKeystone(Authconn):
         """
         try:
             token_info = self.keystone.tokens.validate(token=token)
-            roles = self.keystone.roles.list(user=token_info["user"]["id"], project=token_info["project"]["id"])
+            roles_info = self.keystone.roles.list(user=token_info["user"]["id"], project=token_info["project"]["id"])
+
+            roles = [role.name for role in roles_info]
 
             return roles
         except ClientException:
@@ -168,10 +187,7 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if user creation failed.
         """
         try:
-            result = self.keystone.users.create(user, password=password, domain=self.user_domain_name)
-
-            if not result:
-                raise ClientException()
+            self.keystone.users.create(user, password=password, domain=self.user_domain_name)
         except ClientException:
             self.logger.exception("Error during user creation using keystone")
             raise AuthconnOperationException("Error during user creation using Keystone")
@@ -185,10 +201,8 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if user password change failed.
         """
         try:
-            result = self.keystone.users.update(user, password=new_password)
-
-            if not result:
-                raise ClientException()
+            user_obj = list(filter(lambda x: x.name == user, self.keystone.users.list()))[0]
+            self.keystone.users.update(user_obj, password=new_password)
         except ClientException:
             self.logger.exception("Error during user password update using keystone")
             raise AuthconnOperationException("Error during user password update using Keystone")
@@ -201,10 +215,8 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if user deletion failed.
         """
         try:
-            result = self.keystone.users.delete(user)
-
-            if not result:
-                raise ClientException()
+            user_obj = list(filter(lambda x: x.name == user, self.keystone.users.list()))[0]
+            self.keystone.users.delete(user_obj)
         except ClientException:
             self.logger.exception("Error during user deletion using keystone")
             raise AuthconnOperationException("Error during user deletion using Keystone")
@@ -217,10 +229,9 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if role creation failed.
         """
         try:
-            result = self.keystone.roles.create(role, domain=self.user_domain_name)
-
-            if not result:
-                raise ClientException()
+            self.keystone.roles.create(role)
+        except Conflict as ex:
+            self.logger.info("Duplicate entry: %s", str(ex))
         except ClientException:
             self.logger.exception("Error during role creation using keystone")
             raise AuthconnOperationException("Error during role creation using Keystone")
@@ -233,10 +244,8 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if role deletion failed.
         """
         try:
-            result = self.keystone.roles.delete(role)
-
-            if not result:
-                raise ClientException()
+            role_obj = list(filter(lambda x: x.name == role, self.keystone.roles.list()))[0]
+            self.keystone.roles.delete(role_obj)
         except ClientException:
             self.logger.exception("Error during role deletion using keystone")
             raise AuthconnOperationException("Error during role deletion using Keystone")
@@ -249,10 +258,7 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if project creation failed.
         """
         try:
-            result = self.keystone.project.create(project, self.project_domain_name)
-
-            if not result:
-                raise ClientException()
+            self.keystone.project.create(project, self.project_domain_name)
         except ClientException:
             self.logger.exception("Error during project creation using keystone")
             raise AuthconnOperationException("Error during project creation using Keystone")
@@ -265,10 +271,8 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if project deletion failed.
         """
         try:
-            result = self.keystone.project.delete(project)
-
-            if not result:
-                raise ClientException()
+            project_obj = list(filter(lambda x: x.name == project, self.keystone.projects.list()))[0]
+            self.keystone.project.delete(project_obj)
         except ClientException:
             self.logger.exception("Error during project deletion using keystone")
             raise AuthconnOperationException("Error during project deletion using Keystone")
@@ -283,10 +287,11 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if role assignment failed.
         """
         try:
-            result = self.keystone.roles.grant(role, user=user, project=project)
+            user_obj = list(filter(lambda x: x.name == user, self.keystone.users.list()))[0]
+            project_obj = list(filter(lambda x: x.name == project, self.keystone.projects.list()))[0]
+            role_obj = list(filter(lambda x: x.name == role, self.keystone.roles.list()))[0]
 
-            if not result:
-                raise ClientException()
+            self.keystone.roles.grant(role_obj, user=user_obj, project=project_obj)
         except ClientException:
             self.logger.exception("Error during user role assignment using keystone")
             raise AuthconnOperationException("Error during user role assignment using Keystone")
@@ -301,10 +306,11 @@ class AuthconnKeystone(Authconn):
         :raises AuthconnOperationException: if role assignment revocation failed.
         """
         try:
-            result = self.keystone.roles.revoke(role, user=user, project=project)
+            user_obj = list(filter(lambda x: x.name == user, self.keystone.users.list()))[0]
+            project_obj = list(filter(lambda x: x.name == project, self.keystone.projects.list()))[0]
+            role_obj = list(filter(lambda x: x.name == role, self.keystone.roles.list()))[0]
 
-            if not result:
-                raise ClientException()
+            self.keystone.roles.revoke(role_obj, user=user_obj, project=project_obj)
         except ClientException:
             self.logger.exception("Error during user role revocation using keystone")
             raise AuthconnOperationException("Error during user role revocation using Keystone")

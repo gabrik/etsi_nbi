@@ -1,0 +1,137 @@
+# Copyright 2018 Whitestack, LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+#
+# For those usages not covered by the Apache License, Version 2.0 please
+# contact: esousa@whitestack.com or glavado@whitestack.com
+##
+
+---
+roles_to_operations:
+
+##
+# This file defines the mapping between user roles and operation permission.
+# It uses the following pattern:
+#
+#    - role: <ROLE_NAME>
+#      operations:
+#        "<OPERATION>": true | false
+#
+# <ROLE_NAME> defines the name of the role. This name will be matched with an
+# existing role in the RBAC system.
+#
+# NOTE: The role will only be used if there is an existing match. If there
+#       isn't a role in the system that can be matched, the operation permissions
+#       won't yield any result.
+#
+# operations: is a list of operation permissions for the role. An operation
+# permission is defined using the following pattern:
+#
+#    "<OPERATION>": true | false
+#
+# The operations are defined using an hierarchical tree. For this purpose, an
+# <OPERATION> tag can represents the path for the following:
+#    - Root
+#    - Node
+#    - Leaf
+#
+# The root <OPERATION> tag is defined using "." and the default value is false.
+# When you use this tag, all the operation permissions will be set to the value
+# assigned.
+# NOTE 1: The default value is false. So if a value isn't specified, it will
+#         default to false.
+# NOTE 2: The root <OPERATION> tag can be overridden by using more specific tags
+#         with a different value.
+#
+# The node <OPERATION> tag is defined by using an internal node of the tree, i.e.
+# "nsds", "users.id". A node <OPERATION> tag will affect all the nodes and leafs
+# beneath it. It can be used to override a root <OPERATION> tag.
+# NOTE 1: It can be overridden by using a more specific tag, such as a node which
+#         is beneath it or a leaf.
+#
+# The leaf <OPERATION> tag is defined by using a leaf of the tree, i.e. "users.post",
+# "ns_instances.get", "vim_accounts.id.get". A leaf <OPERATION> tag will override all
+# the values defined by the parent nodes, since it is the more specific tag that can
+# exist.
+#
+# General notes:
+#    - In order to find which tags are in use, check the resources_to_operations.yml.
+#    - In order to find which roles are in use, check the RBAC system.
+#    - Non existing tags will be ignored.
+#    - Tags finishing in a dot (excluding the root <OPERATION> tag) will be ignored.
+#    - The anonymous role allows to bypass the role definition for paths that
+#      shouldn't be verified.
+##
+
+  - role: "system_admin"
+    operations:
+      ".": true
+
+  - role: "account_manager"
+    operations:
+      ".": false
+      "tokens": true
+      "users": true
+      "projects": true
+      "roles": true
+
+  - role: "project_admin"
+    operations:
+      ".": true
+      # Users
+      "users.post": false
+      "users.id.post": false
+      "users.id.delete": false
+      # Projects
+      "projects": false
+      # Roles
+      "roles": false
+
+  - role: "project_user"
+    operations:
+      ".": true
+      # NS Instances
+      "ns_instances": false
+      "ns_instances.get": true
+      # VNF Instances
+      "vnf_instances": false
+      # Users
+      "users": false
+      "users.id.get": true
+      "users.id.put": true
+      "users.id.patch": true
+      # Projects
+      "projects": false
+      # VIMs
+      "vims": false
+      "vims.get": true
+      "vims.id.get": true
+      # VIM Accounts
+      "vim_accounts": false
+      "vim_accounts.get": true
+      "vim_accounts.id.get": true
+      # SDN Controllers
+      "sdn_controllers": false
+      "sdn_controllers.get": true
+      "sdn_controllers.id.get": true
+      # WIMs
+      "wims": false
+      "wims.get": true
+      "wims.id.get": true
+      # WIM Accounts
+      "wim_accounts": false
+      "wim_accounts.get": true
+      "wim_accounts.id.get": true
+
+  - role: "anonymous"
+    operations:

@@ -17,7 +17,7 @@
 ##
 
 include README.rst
-recursive-include osm_nbi *.py *.sh  *.cfg
+recursive-include osm_nbi *.py *.sh *.cfg *.yml
 recursive-include osm_nbi/html_public *
 recursive-include osm_nbi/http *
 recursive-include devops-stages *

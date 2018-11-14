@@ -19,12 +19,14 @@ Authenticator is responsible for authenticating the users,
 create the tokens unscoped and scoped, retrieve the role
 list inside the projects that they are inserted
 """
+from os import path
 
 __author__ = "Eduardo Sousa <esousa@whitestack.com>; Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __date__ = "$27-jul-2018 23:59:59$"
 
 import cherrypy
 import logging
+import yaml
 from base64 import standard_b64decode
 from copy import deepcopy
 from functools import reduce
@@ -32,6 +34,7 @@ from hashlib import sha256
 from http import HTTPStatus
 from random import choice as random_choice
 from time import time
+from uuid import uuid4
 
 from authconn import AuthException
 from authconn_keystone import AuthconnKeystone
@@ -48,7 +51,7 @@ class Authenticator:
     RBAC model to manage permissions on operations.
     """
 
-    periodin_db_pruning = 60*30  # for the internal backend only. every 30 minutes expired tokens will be pruned
+    periodin_db_pruning = 60 * 30  # for the internal backend only. every 30 minutes expired tokens will be pruned
 
     def __init__(self):
         """
@@ -60,7 +63,10 @@ class Authenticator:
         self.db = None
         self.tokens_cache = dict()
         self.next_db_prune_time = 0  # time when next cleaning of expired tokens must be done
-
+        self.resources_to_operations_file = None
+        self.roles_to_operations_file = None
+        self.resources_to_operations_mapping = {}
+        self.operation_to_allowed_roles = {}
         self.logger = logging.getLogger("nbi.authenticator")
 
     def start(self, config):
@@ -92,6 +98,28 @@ class Authenticator:
                 else:
                     raise AuthException("Unknown authentication backend: {}"
                                         .format(config["authentication"]["backend"]))
+            if not self.resources_to_operations_file:
+                if "resources_to_operations" in config["rbac"]:
+                    self.resources_to_operations_file = config["rbac"]["resources_to_operations"]
+                else:
+                    for config_file in (__file__[:__file__.rfind("auth.py")] + "resources_to_operations.yml",
+                                        "./resources_to_operations.yml"):
+                        if path.isfile(config_file):
+                            self.resources_to_operations_file = config_file
+                            break
+                    if not self.resources_to_operations_file:
+                        raise AuthException("Invalid permission configuration: resources_to_operations file missing")
+            if not self.roles_to_operations_file:
+                if "roles_to_operations" in config["rbac"]:
+                    self.roles_to_operations_file = config["rbac"]["roles_to_operations"]
+                else:
+                    for config_file in (__file__[:__file__.rfind("auth.py")] + "roles_to_operations.yml",
+                                        "./roles_to_operations.yml"):
+                        if path.isfile(config_file):
+                            self.roles_to_operations_file = config_file
+                            break
+                    if not self.roles_to_operations_file:
+                        raise AuthException("Invalid permission configuration: roles_to_operations file missing")
         except Exception as e:
             raise AuthException(str(e))
 
@@ -102,15 +130,125 @@ class Authenticator:
         except DbException as e:
             raise AuthException(str(e), http_code=e.http_code)
 
-    def init_db(self, target_version='1.1'):
+    def init_db(self, target_version='1.0'):
         """
-        Check if the database has been initialized, with at least one user. If not, create an adthe required tables
+        Check if the database has been initialized, with at least one user. If not, create the required tables
         and insert the predefined mappings between roles and permissions.
 
         :param target_version: schema version that should be present in the database.
         :return: None if OK, exception if error or version is different.
         """
-        pass
+        # Always reads operation to resource mapping from file (this is static, no need to store it in MongoDB)
+        # Operations encoding: "<METHOD> <URL>"
+        # Note: it is faster to rewrite the value than to check if it is already there or not
+        operations = []
+        with open(self.resources_to_operations_file, "r") as stream:
+            resources_to_operations_yaml = yaml.load(stream)
+
+        for resource, operation in resources_to_operations_yaml["resources_to_operations"].items():
+            operation_key = operation.replace(".", ":")
+            if operation_key not in operations:
+                operations.append(operation_key)
+            self.resources_to_operations_mapping[resource] = operation_key
+
+        records = self.db.get_list("roles_operations")
+
+        # Loading permissions to MongoDB. If there are permissions already in MongoDB, do nothing.
+        if len(records) == 0:
+            with open(self.roles_to_operations_file, "r") as stream:
+                roles_to_operations_yaml = yaml.load(stream)
+
+            roles = []
+            for role_with_operations in roles_to_operations_yaml["roles_to_operations"]:
+                # Verifying if role already exists. If it does, send warning to log and ignore it.
+                if role_with_operations["role"] not in roles:
+                    roles.append(role_with_operations["role"])
+                else:
+                    self.logger.warning("Duplicated role with name: {0}. Role definition is ignored."
+                                        .format(role_with_operations["role"]))
+                    continue
+
+                operations = {}
+                root = None
+
+                if not role_with_operations["operations"]:
+                    continue
+
+                for operation, is_allowed in role_with_operations["operations"].items():
+                    if not isinstance(is_allowed, bool):
+                        continue
+
+                    if operation == ".":
+                        root = is_allowed
+                        continue
+
+                    if len(operation) != 1 and operation[-1] == ".":
+                        self.logger.warning("Invalid operation {0} terminated in '.'. "
+                                            "Operation will be discarded"
+                                            .format(operation))
+                        continue
+
+                    operation_key = operation.replace(".", ":")
+                    if operation_key not in operations.keys():
+                        operations[operation_key] = is_allowed
+                    else:
+                        self.logger.info("In role {0}, the operation {1} with the value {2} was discarded due to "
+                                         "repetition.".format(role_with_operations["role"], operation, is_allowed))
+
+                if not root:
+                    root = False
+                    self.logger.info("Root for role {0} not defined. Default value 'False' applied."
+                                     .format(role_with_operations["role"]))
+
+                now = time()
+                operation_to_roles_item = {
+                    "_id": str(uuid4()),
+                    "_admin": {
+                        "created": now,
+                        "modified": now,
+                    },
+                    "role": role_with_operations["role"],
+                    "root": root
+                }
+
+                for operation, value in operations.items():
+                    operation_to_roles_item[operation] = value
+
+                self.db.create("roles_operations", operation_to_roles_item)
+
+        permissions = {oper: [] for oper in operations}
+        records = self.db.get_list("roles_operations")
+
+        ignore_fields = ["_id", "_admin", "role", "root"]
+        roles = []
+        for record in records:
+
+            roles.append(record["role"])
+            record_permissions = {oper: record["root"] for oper in operations}
+            operations_joined = [(oper, value) for oper, value in record.items() if oper not in ignore_fields]
+            operations_joined.sort(key=lambda x: x[0].count(":"))
+
+            for oper in operations_joined:
+                match = list(filter(lambda x: x.find(oper[0]) == 0, record_permissions.keys()))
+
+                for m in match:
+                    record_permissions[m] = oper[1]
+
+            allowed_operations = [k for k, v in record_permissions.items() if v is True]
+
+            for allowed_op in allowed_operations:
+                permissions[allowed_op].append(record["role"])
+
+        for oper, role_list in permissions.items():
+            self.operation_to_allowed_roles[oper] = role_list
+
+        if self.config["authentication"]["backend"] != "internal":
+            for role in roles:
+                if role == "anonymous":
+                    continue
+                self.backend.create_role(role)
+
+            self.backend.assign_role_to_user("admin", "admin", "system_admin")
 
     def authorize(self):
         token = None
@@ -145,10 +283,15 @@ class Authenticator:
             if self.config["authentication"]["backend"] == "internal":
                 return self._internal_authorize(token)
             else:
+                if not token:
+                    raise AuthException("Needed a token or Authorization http header",
+                                        http_code=HTTPStatus.UNAUTHORIZED)
                 try:
                     self.backend.validate_token(token)
+                    self.check_permissions(self.tokens_cache[token], cherrypy.request.path_info,
+                                           cherrypy.request.method)
                     # TODO: check if this can be avoided. Backend may provide enough information
-                    return self.tokens_cache[token]
+                    return deepcopy(self.tokens_cache[token])
                 except AuthException:
                     self.del_token(token)
                     raise
@@ -179,6 +322,9 @@ class Authenticator:
                                         http_code=HTTPStatus.UNAUTHORIZED)
             else:
                 project_id = projects[0]
+
+            if not session:
+                token, projects = self.backend.authenticate_with_token(token, project_id)
 
             if project_id == "admin":
                 session_admin = True
@@ -238,6 +384,77 @@ class Authenticator:
                 return "token '{}' deleted".format(token)
             except KeyError:
                 raise AuthException("Token '{}' not found".format(token), http_code=HTTPStatus.NOT_FOUND)
+
+    def check_permissions(self, session, url, method):
+        self.logger.info("Session: {}".format(session))
+        self.logger.info("URL: {}".format(url))
+        self.logger.info("Method: {}".format(method))
+
+        key, parameters = self._normalize_url(url, method)
+
+        # TODO: Check if parameters might be useful for the decision
+
+        operation = self.resources_to_operations_mapping[key]
+        roles_required = self.operation_to_allowed_roles[operation]
+        roles_allowed = self.backend.get_role_list(session["id"])
+
+        if "anonymous" in roles_required:
+            return
+
+        for role in roles_allowed:
+            if role in roles_required:
+                return
+
+        raise AuthException("Access denied: lack of permissions.")
+
+    def _normalize_url(self, url, method):
+        # Removing query strings
+        normalized_url = url if '?' not in url else url[:url.find("?")]
+        normalized_url_splitted = normalized_url.split("/")
+        parameters = {}
+
+        filtered_keys = [key for key in self.resources_to_operations_mapping.keys()
+                         if method in key.split()[0]]
+
+        for idx, path_part in enumerate(normalized_url_splitted):
+            tmp_keys = []
+            for tmp_key in filtered_keys:
+                splitted = tmp_key.split()[1].split("/")
+                if "<" in splitted[idx] and ">" in splitted[idx]:
+                    if splitted[idx] == "<artifactPath>":
+                        tmp_keys.append(tmp_key)
+                        continue
+                    elif idx == len(normalized_url_splitted) - 1 and \
+                            len(normalized_url_splitted) != len(splitted):
+                        continue
+                    else:
+                        tmp_keys.append(tmp_key)
+                elif splitted[idx] == path_part:
+                    if idx == len(normalized_url_splitted) - 1 and \
+                            len(normalized_url_splitted) != len(splitted):
+                        continue
+                    else:
+                        tmp_keys.append(tmp_key)
+            filtered_keys = tmp_keys
+            if len(filtered_keys) == 1 and \
+                    filtered_keys[0].split("/")[-1] == "<artifactPath>":
+                break
+
+        if len(filtered_keys) == 0:
+            raise AuthException("Cannot make an authorization decision. URL not found. URL: {0}".format(url))
+        elif len(filtered_keys) > 1:
+            raise AuthException("Cannot make an authorization decision. Multiple URLs found. URL: {0}".format(url))
+
+        filtered_key = filtered_keys[0]
+
+        for idx, path_part in enumerate(filtered_key.split()[1].split("/")):
+            if "<" in path_part and ">" in path_part:
+                if path_part == "<artifactPath>":
+                    parameters[path_part[1:-1]] = "/".join(normalized_url_splitted[idx:])
+                else:
+                    parameters[path_part[1:-1]] = normalized_url_splitted[idx]
+
+        return filtered_key, parameters
 
     def _internal_authorize(self, token_id):
         try:
@@ -354,4 +571,4 @@ class Authenticator:
         if not self.next_db_prune_time or self.next_db_prune_time >= now:
             self.db.del_list("tokens", {"expires.lt": now})
             self.next_db_prune_time = self.periodin_db_pruning + now
-            self.tokens_cache.clear()   # force to reload tokens from database
+            self.tokens_cache.clear()  # force to reload tokens from database
