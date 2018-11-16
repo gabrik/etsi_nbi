@@ -8,8 +8,8 @@ from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from base_topic import EngineException, versiontuple
 from admin_topics import UserTopic, ProjectTopic, VimAccountTopic, SdnTopic
-from descriptor_topics import VnfdTopic, NsdTopic, PduTopic
-from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic
+from descriptor_topics import VnfdTopic, NsdTopic, PduTopic, NstTopic
+from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic, NsiTopic, NsiLcmOpTopic
 from base64 import b64encode
 from os import urandom
 
@@ -21,6 +21,7 @@ class Engine(object):
     map_from_topic_to_class = {
         "vnfds": VnfdTopic,
         "nsds": NsdTopic,
+        "nsts": NstTopic,
         "pdus": PduTopic,
         "nsrs": NsrTopic,
         "vnfrs": VnfrTopic,
@@ -29,6 +30,8 @@ class Engine(object):
         "sdns": SdnTopic,
         "users": UserTopic,
         "projects": ProjectTopic,
+        "nsis": NsiTopic,
+        "nsilcmops": NsiLcmOpTopic
         # [NEW_TOPIC]: add an entry here
     }
 

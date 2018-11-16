@@ -33,7 +33,7 @@ auth_database_version = '1.0'
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
 URL: /osm                                                       GET     POST    PUT     DELETE  PATCH
-        /nsd/v1                                                 O       O
+        /nsd/v1
             /ns_descriptors_content                             O       O
                 /<nsdInfoId>                                    O       O       O       O
             /ns_descriptors                                     O5      O5
@@ -76,9 +76,11 @@ URL: /osm                                                       GET     POST    
                 /<vnfInstanceId>                                O
             /subscriptions                                      5       5
                 /<subscriptionId>                               5                       X
+
         /pdu/v1
             /pdu_descriptor                                     O       O
                 /<id>                                           O               O       O       O
+
         /admin/v1
             /tokens                                             O       O
                 /<id>                                           O                       O
@@ -90,6 +92,30 @@ URL: /osm                                                       GET     POST    
                 /<id>                                           O                       O       O
             /sdns                                               O       O
                 /<id>                                           O                       O       O
+
+        /nst/v1                                                 O       O
+            /netslice_templates_content                         O       O
+                /<nstInfoId>                                    O       O       O       O
+            /netslice_templates                                 O       O
+                /<nstInfoId>                                    O                       O       O
+                    /nst_content                                O               O
+                    /nst                                        O
+                    /artifacts[/<artifactPath>]                 O
+            /subscriptions                                      X       X
+                /<subscriptionId>                               X                       X
+
+        /nsilcm/v1
+            /netslice_instances_content                         O       O
+                /<SliceInstanceId>                              O                       O
+            /netslice_instances                                 O       O
+                /<SliceInstanceId>                              O                       O
+                    instantiate                                         O
+                    terminate                                           O
+                    action                                              O
+            /nsi_lcm_op_occs                                    O       O
+                /<nsiLcmOpOccId>                                O                       O       O
+            /subscriptions                                      X       X
+                /<subscriptionId>                               X                       X
 
 query string:
     Follows SOL005 section 4.3.2 It contains extra METHOD to override http method, FORCE to force.
@@ -250,6 +276,40 @@ class Server(object):
                     "vnf_instances": {"METHODS": ("GET"),
                                       "<ID>": {"METHODS": ("GET")}
                                       },
+                }
+            },
+            "nst": {
+                "v1": {
+                    "netslice_templates_content": {"METHODS": ("GET", "POST"),
+                                                   "<ID>": {"METHODS": ("GET", "PUT", "DELETE")}
+                                                   },
+                    "netslice_templates": {"METHODS": ("GET", "POST"),
+                                           "<ID>": {"METHODS": ("GET", "DELETE"), "TODO": "PATCH",
+                                                    "nst_content": {"METHODS": ("GET", "PUT")},
+                                                    "nst": {"METHODS": "GET"},  # descriptor inside package
+                                                    "artifacts": {"*": {"METHODS": "GET"}}
+                                                    }
+                                           },
+                    "subscriptions": {"TODO": ("GET", "POST"),
+                                      "<ID>": {"TODO": ("GET", "DELETE")}
+                                      },
+                }
+            },
+            "nsilcm": {
+                "v1": {
+                    "netslice_instances_content": {"METHODS": ("GET", "POST"),
+                                                   "<ID>": {"METHODS": ("GET", "DELETE")}
+                                                   },
+                    "netslice_instances": {"METHODS": ("GET", "POST"),
+                                           "<ID>": {"METHODS": ("GET", "DELETE"),
+                                                    "terminate": {"METHODS": "POST"},
+                                                    "instantiate": {"METHODS": "POST"},
+                                                    "action": {"METHODS": "POST"},
+                                                    }
+                                           },
+                    "nsi_lcm_op_occs": {"METHODS": "GET",
+                                        "<ID>": {"METHODS": "GET"},
+                                        },
                 }
             },
         }
@@ -606,7 +666,7 @@ class Server(object):
             if not main_topic or not version or not topic:
                 raise NbiException("URL must contain at least 'main_topic/version/topic'",
                                    HTTPStatus.METHOD_NOT_ALLOWED)
-            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm", "pdu"):
+            if main_topic not in ("admin", "vnfpkgm", "nsd", "nslcm", "pdu", "nst", "nsilcm"):
                 raise NbiException("URL main_topic '{}' not supported".format(main_topic),
                                    HTTPStatus.METHOD_NOT_ALLOWED)
             if version != 'v1':
@@ -620,9 +680,7 @@ class Server(object):
                 force = kwargs.pop("FORCE")
             else:
                 force = False
-
             self._check_valid_url_method(method, main_topic, version, topic, _id, item, *args)
-
             if main_topic == "admin" and topic == "tokens":
                 return self.token(method, _id, kwargs)
 
@@ -645,14 +703,20 @@ class Server(object):
                     engine_topic = "nslcmops"
                 if topic == "vnfrs" or topic == "vnf_instances":
                     engine_topic = "vnfrs"
+            elif main_topic == "nst":
+                engine_topic = "nsts"
+            elif main_topic == "nsilcm":
+                engine_topic = "nsis"
+                if topic == "nsi_lcm_op_occs":
+                    engine_topic = "nsilcmops" 
             elif main_topic == "pdu":
                 engine_topic = "pdus"
             if engine_topic == "vims":   # TODO this is for backward compatibility, it will remove in the future
                 engine_topic = "vim_accounts"
 
             if method == "GET":
-                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd"):
-                    if item in ("vnfd", "nsd"):
+                if item in ("nsd_content", "package_content", "artifacts", "vnfd", "nsd", "nst", "nst_content"):
+                    if item in ("vnfd", "nsd", "nst"):
                         path = "$DESCRIPTOR"
                     elif args:
                         path = args
@@ -668,7 +732,7 @@ class Server(object):
                 else:
                     outdata = self.engine.get_item(session, engine_topic, _id)
             elif method == "POST":
-                if topic in ("ns_descriptors_content", "vnf_packages_content"):
+                if topic in ("ns_descriptors_content", "vnf_packages_content", "netslice_templates_content"):
                     _id = cherrypy.request.headers.get("Transaction-Id")
                     if not _id:
                         _id = self.engine.new_item(rollback, session, engine_topic, {}, None, cherrypy.request.headers,
@@ -696,6 +760,22 @@ class Server(object):
                     self._set_location_header(main_topic, version, "ns_lcm_op_occs", _id)
                     outdata = {"id": _id}
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
+                elif topic == "netslice_instances_content":
+                    # creates NetSlice_Instance_record (NSIR)
+                    _id = self.engine.new_item(rollback, session, engine_topic, indata, kwargs, force=force)
+                    self._set_location_header(main_topic, version, topic, _id)
+                    indata["lcmOperationType"] = "instantiate"
+                    indata["nsiInstanceId"] = _id
+                    self.engine.new_item(rollback, session, "nsilcmops", indata, kwargs)
+                    outdata = {"id": _id}
+                    
+                elif topic == "netslice_instances" and item:
+                    indata["lcmOperationType"] = item
+                    indata["nsiInstanceId"] = _id
+                    _id = self.engine.new_item(rollback, session, "nsilcmops", indata, kwargs)
+                    self._set_location_header(main_topic, version, "nsi_lcm_op_occs", _id)
+                    outdata = {"id": _id}
+                    cherrypy.response.status = HTTPStatus.ACCEPTED.value
                 else:
                     _id = self.engine.new_item(rollback, session, engine_topic, indata, kwargs,
                                                cherrypy.request.headers, force=force)
@@ -718,6 +798,15 @@ class Server(object):
                         opp_id = self.engine.new_item(rollback, session, "nslcmops", nslcmop_desc, None)
                         outdata = {"_id": opp_id}
                         cherrypy.response.status = HTTPStatus.ACCEPTED.value
+                    elif topic == "netslice_instances_content" and not force:
+                        nsilcmop_desc = {
+                            "lcmOperationType": "terminate",
+                            "nsiInstanceId": _id,
+                            "autoremove": True
+                        }
+                        opp_id = self.engine.new_item(rollback, session, "nsilcmops", nsilcmop_desc, None)
+                        outdata = {"_id": opp_id}
+                        cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     else:
                         self.engine.del_item(session, engine_topic, _id, force)
                         cherrypy.response.status = HTTPStatus.NO_CONTENT.value
@@ -729,7 +818,7 @@ class Server(object):
                 if not indata and not kwargs:
                     raise NbiException("Nothing to update. Provide payload and/or query string",
                                        HTTPStatus.BAD_REQUEST)
-                if item in ("nsd_content", "package_content") and method == "PUT":
+                if item in ("nsd_content", "package_content", "nst_content") and method == "PUT":
                     completed = self.engine.upload_content(session, engine_topic, _id, indata, kwargs,
                                                            cherrypy.request.headers, force=force)
                     if not completed:

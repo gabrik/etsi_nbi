@@ -1586,6 +1586,33 @@ class TestDescriptors:
         self.step += 1
 
 
+class TestNstTemplates:
+    description = "Upload a NST to OSM"
+
+    def __init__(self):
+        self.nst_filenames = ("@./cirros_slice/cirros_slice.yaml")
+
+    def run(self, engine, test_osm, manual_check, test_params=None):
+        # nst CREATE
+        engine.get_autorization()
+        r = engine.test("NST1", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
+                        self.nst_filenames, 
+                        201, {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, 
+                        "yaml")
+        location = r.headers["Location"]
+        nst_id = location[location.rfind("/")+1:]
+
+        # nstd SHOW OSM format
+        r = engine.test("NST2", "Show NSTD OSM format", "GET", 
+                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
+                        200, r_header_json, "json")      
+
+        # nstd DELETE
+        r = engine.test("NST3", "Delete NSTD", "DELETE", 
+                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
+                        204, None, 0)
+
+
 if __name__ == "__main__":
     global logger
     test = ""
@@ -1622,6 +1649,7 @@ if __name__ == "__main__":
             # "Deploy-MultiVIM": TestDeployMultiVIM,
             "DeploySingleVdu": TestDeploySingleVdu,
             "DeployHnfd": TestDeployHnfd,
+            "Upload-Slice-Template": TestNstTemplates,
         }
         test_to_do = []
         test_params = {}

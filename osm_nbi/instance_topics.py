@@ -5,7 +5,7 @@ from uuid import uuid4
 from http import HTTPStatus
 from time import time
 from copy import copy, deepcopy
-from validation import validate_input, ValidationError, ns_instantiate, ns_action, ns_scale
+from validation import validate_input, ValidationError, ns_instantiate, ns_action, ns_scale, nsi_instantiate
 from base_topic import BaseTopic, EngineException, get_iterable
 from descriptor_topics import DescriptorTopic
 
@@ -304,17 +304,6 @@ class NsLcmOpTopic(BaseTopic):
 
     def __init__(self, db, fs, msg):
         BaseTopic.__init__(self, db, fs, msg)
-
-    def _validate_input_new(self, input, force=False):
-        """
-        Validates input user content for a new entry. It uses jsonschema for each type or operation.
-        :param input: user input content for the new topic
-        :param force: may be used for being more tolerant
-        :return: The same input content, or a changed version of it.
-        """
-        if self.schema_new:
-            validate_input(input, self.schema_new)
-        return input
 
     def _check_ns_operation(self, session, nsr, operation, indata):
         """
@@ -630,7 +619,8 @@ class NsLcmOpTopic(BaseTopic):
         }
         return nslcmop
 
-    def new(self, rollback, session, indata=None, kwargs=None, headers=None, force=False, make_public=False):
+    def new(self, rollback, session, indata=None, kwargs=None, headers=None, force=False, make_public=False,
+            slice_object=False):
         """
         Performs a new operation over a ns
         :param rollback: list to append created items at database in case a rollback must to be done
@@ -677,12 +667,317 @@ class NsLcmOpTopic(BaseTopic):
             self.format_on_new(nslcmop_desc, session["project_id"], make_public=make_public)
             _id = self.db.create("nslcmops", nslcmop_desc)
             rollback.append({"topic": "nslcmops", "_id": _id})
-            self.msg.write("ns", operation, nslcmop_desc)
+            if not slice_object:
+                self.msg.write("ns", operation, nslcmop_desc)
             return _id
         except ValidationError as e:
             raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
         # except DbException as e:
         #     raise EngineException("Cannot get ns_instance '{}': {}".format(e), HTTPStatus.NOT_FOUND)
+
+    def delete(self, session, _id, force=False, dry_run=False):
+        raise EngineException("Method delete called directly", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def edit(self, session, _id, indata=None, kwargs=None, force=False, content=None):
+        raise EngineException("Method edit called directly", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+class NsiTopic(BaseTopic):
+    topic = "nsis"
+    topic_msg = "nsi"
+
+    def __init__(self, db, fs, msg):
+        BaseTopic.__init__(self, db, fs, msg)
+
+    def _check_descriptor_dependencies(self, session, descriptor):
+        """
+        Check that the dependent descriptors exist on a new descriptor or edition
+        :param session: client session information
+        :param descriptor: descriptor to be inserted or edit
+        :return: None or raises exception
+        """
+        if not descriptor.get("nst-ref"):
+            return
+        nstd_id = descriptor["nst-ref"]
+        if not self.get_item_list(session, "nsts", {"id": nstd_id}):
+            raise EngineException("Descriptor error at nst-ref='{}' references a non exist nstd".format(nstd_id),
+                                  http_code=HTTPStatus.CONFLICT)
+
+    @staticmethod
+    def format_on_new(content, project_id=None, make_public=False):
+        BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
+
+    def check_conflict_on_del(self, session, _id, force=False):
+        if force:
+            return
+        nsi = self.db.get_one("nsis", {"_id": _id})
+        if nsi["_admin"].get("nsiState") == "INSTANTIATED":
+            raise EngineException("nsi '{}' cannot be deleted because it is in 'INSTANTIATED' state. "
+                                  "Launch 'terminate' operation first; or force deletion".format(_id),
+                                  http_code=HTTPStatus.CONFLICT)
+
+    def delete(self, session, _id, force=False, dry_run=False):
+        """
+        Delete item by its internal _id
+        :param session: contains the used login username, working project, and admin rights
+        :param _id: server internal id
+        :param force: indicates if deletion must be forced in case of conflict
+        :param dry_run: make checking but do not delete
+        :return: dictionary with deleted item _id. It raises EngineException on error: not found, conflict, ...
+        """
+        # TODO add admin to filter, validate rights
+        BaseTopic.delete(self, session, _id, force, dry_run=True)
+        if dry_run:
+            return
+
+        # deletes NetSlice instance object
+        v = self.db.del_one("nsis", {"_id": _id})
+
+        # makes a temporal list of nsilcmops objects related to the _id given and deletes them from db
+        _filter = {"netsliceInstanceId": _id} 
+        self.db.del_list("nsilcmops", _filter)
+
+        _filter = {"operationParams.netsliceInstanceId": _id}
+        nslcmops_list = self.db.get_list("nslcmops", _filter)
+
+        for id_item in nslcmops_list:
+            _filter = {"_id": id_item}
+            nslcmop = self.db.get_one("nslcmops", _filter)
+            nsr_id = nslcmop["operationParams"]["nsr_id"]
+            NsrTopic.delete(self, session, nsr_id, force=False, dry_run=False)
+        self._send_msg("deleted", {"_id": _id})
+        return v
+
+    def new(self, rollback, session, indata=None, kwargs=None, headers=None, force=False, make_public=False):
+        """
+        Creates a new netslice instance record into database. It also creates needed nsrs and vnfrs
+        :param rollback: list to append the created items at database in case a rollback must be done
+        :param session: contains the used login username and working project
+        :param indata: params to be used for the nsir
+        :param kwargs: used to override the indata descriptor
+        :param headers: http request headers
+        :param force: If True avoid some dependence checks
+        :param make_public: Make the created item public to all projects
+        :return: the _id of nsi descriptor created at database
+        """
+
+        try:
+            slice_request = self._remove_envelop(indata)
+            # Override descriptor with query string kwargs
+            self._update_input_with_kwargs(slice_request, kwargs)
+            self._validate_input_new(slice_request, force)
+
+            step = ""
+            # look for nstd
+            self.logger.info(str(slice_request))
+            step = "getting nstd id='{}' from database".format(slice_request.get("nstdId"))
+            _filter = {"id": slice_request["nstdId"]}
+            _filter.update(BaseTopic._get_project_filter(session, write=False, show_all=True))
+            nstd = self.db.get_one("nsts", _filter)
+            nstd.pop("_admin", None)
+            nstd.pop("_id", None)
+            nsi_id = str(uuid4())
+            step = "filling nsi_descriptor with input data"
+
+            # "instantiation-parameters.netslice-subnet": []
+            # TODO: Equal as template for now
+            nsi_descriptor = {
+                "id": nsi_id,
+                "nst-ref": nstd["id"],
+                "instantiation-parameters": {
+                    "netslice-subnet": []
+                },
+                "network-slice-template": nstd,
+                "_id": nsi_id,
+            }
+
+            # Creating netslice-subnet_record. 
+            needed_nsds = {}
+            services = []
+            for member_ns in nstd["netslice-subnet"]:
+                nsd_id = member_ns["nsd-ref"]
+                step = "getting nstd id='{}' constituent-nsd='{}' from database".format(
+                    member_ns["nsd-ref"], member_ns["id"])
+                if nsd_id not in needed_nsds:
+                    # Obtain nsd
+                    nsd = DescriptorTopic.get_one_by_id(self.db, session, "nsds", nsd_id)
+                    nsd.pop("_admin")
+                    needed_nsds[nsd_id] = nsd
+                    member_ns["_id"] = needed_nsds[nsd_id].get("_id")
+                    services.append(member_ns)
+                else:
+                    nsd = needed_nsds[nsd_id]
+                    member_ns["_id"] = needed_nsds[nsd_id].get("_id")
+                    services.append(member_ns)
+
+                step = "filling nsir nsd-id='{}' constituent-nsd='{}' from database".format(
+                    member_ns["nsd-ref"], member_ns["id"])
+
+            step = "creating nsi at database"
+            self.format_on_new(nsi_descriptor, session["project_id"], make_public=make_public)
+            nsi_descriptor["_admin"]["nsiState"] = "NOT_INSTANTIATED"          
+
+            # creates Network Services records (NSRs)
+            step = "creating nsrs at database using NsrTopic.new()"
+            nsrs_list = []
+            for service in services:
+                indata_ns = {}
+                indata_ns["nsdId"] = service["_id"]
+                indata_ns["nsName"] = service["name"]
+                indata_ns["vimAccountId"] = indata.get("vimAccountId")
+                indata_ns["nsDescription"] = service["description"]
+                indata_ns["key-pair-ref"] = None
+                # NsrTopic(rollback, session, indata_ns, kwargs, headers, force)
+                _id_nsr = NsrTopic.new(self, rollback, session, indata_ns, kwargs, headers, force)
+                nsrs_item = {"nsrId": _id_nsr}
+                nsrs_list.append(nsrs_item)
+
+            # Adding the nsrs list to the nsi
+            nsi_descriptor["_admin"]["nsrs-detailed-list"] = nsrs_list
+            # Creating the entry in the database
+            self.db.create("nsis", nsi_descriptor)
+            rollback.append({"topic": "nsis", "_id": nsi_id})
+            return nsi_id
+        except Exception as e:
+            self.logger.exception("Exception {} at NsiTopic.new()".format(e), exc_info=True)
+            raise EngineException("Error {}: {}".format(step, e))
+        except ValidationError as e:
+            raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
+
+    def edit(self, session, _id, indata=None, kwargs=None, force=False, content=None):
+        raise EngineException("Method edit called directly", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+class NsiLcmOpTopic(BaseTopic):
+    topic = "nsilcmops"
+    topic_msg = "nsi"
+    operation_schema = {  # mapping between operation and jsonschema to validate
+        "instantiate": nsi_instantiate,
+        "terminate": None
+    }
+
+    def __init__(self, db, fs, msg):
+        BaseTopic.__init__(self, db, fs, msg)
+
+    def _check_nsi_operation(self, session, nsir, operation, indata):
+        """
+        Check that user has enter right parameters for the operation
+        :param session:
+        :param operation: it can be: instantiate, terminate, action, TODO: update, heal
+        :param indata: descriptor with the parameters of the operation
+        :return: None
+        """
+        nsds = {}
+        nstd = nsir["network-slice-template"]
+
+        def check_valid_netslice_subnet_id(nsId):
+            # TODO change to vnfR (??)
+            for ns in nstd["netslice-subnet"]:
+                if nsId == ns["id"]:
+                    nsd_id = ns["nsd-ref"]
+                    if nsd_id not in nsds:
+                        nsds[nsd_id] = self.db.get_one("nsds", {"id": nsd_id})
+                    return nsds[nsd_id]
+            else:
+                raise EngineException("Invalid parameter nsId='{}' is not one of the "
+                                      "nst:netslice-subnet".format(nsId))
+        if operation == "instantiate":
+            # check the existance of netslice-subnet items
+            for in_nst in get_iterable(indata.get("netslice-subnet")):           
+                nstd = check_valid_netslice_subnet_id(in_nst["nsdId"])
+
+    def _create_nsilcmop(self, session, netsliceInstanceId, operation, params):
+        now = time()
+        _id = str(uuid4())
+        nsilcmop = {
+            "id": _id,
+            "_id": _id,
+            "operationState": "PROCESSING",  # COMPLETED,PARTIALLY_COMPLETED,FAILED_TEMP,FAILED,ROLLING_BACK,ROLLED_BACK
+            "statusEnteredTime": now,
+            "netsliceInstanceId": netsliceInstanceId,
+            "lcmOperationType": operation,
+            "startTime": now,
+            "isAutomaticInvocation": False,
+            "operationParams": params,
+            "isCancelPending": False,
+            "links": {
+                "self": "/osm/nsilcm/v1/nsi_lcm_op_occs/" + _id,
+                "nsInstance": "/osm/nsilcm/v1/netslice_instances/" + netsliceInstanceId,
+            }
+        }
+        return nsilcmop
+
+    def new(self, rollback, session, indata=None, kwargs=None, headers=None, force=False, make_public=False):
+        """
+        Performs a new operation over a ns
+        :param rollback: list to append created items at database in case a rollback must to be done
+        :param session: contains the used login username and working project
+        :param indata: descriptor with the parameters of the operation. It must contains among others
+            nsiInstanceId: _id of the nsir to perform the operation
+            operation: it can be: instantiate, terminate, action, TODO: update, heal
+        :param kwargs: used to override the indata descriptor
+        :param headers: http request headers
+        :param force: If True avoid some dependence checks
+        :param make_public: Make the created item public to all projects
+        :return: id of the nslcmops
+        """
+        try:
+            # Override descriptor with query string kwargs
+            self._update_input_with_kwargs(indata, kwargs)
+            operation = indata["lcmOperationType"]
+            nsiInstanceId = indata["nsiInstanceId"]
+            validate_input(indata, self.operation_schema[operation])
+
+            # get nsi from nsiInstanceId
+            _filter = BaseTopic._get_project_filter(session, write=True, show_all=False)
+            _filter["_id"] = nsiInstanceId
+            nsir = self.db.get_one("nsis", _filter)
+
+            # initial checking
+            if not nsir["_admin"].get("nsiState") or nsir["_admin"]["nsiState"] == "NOT_INSTANTIATED":
+                if operation == "terminate" and indata.get("autoremove"):
+                    # NSIR must be deleted
+                    return self.delete(session, nsiInstanceId)
+                if operation != "instantiate":
+                    raise EngineException("netslice_instance '{}' cannot be '{}' because it is not instantiated".format(
+                        nsiInstanceId, operation), HTTPStatus.CONFLICT)
+            else:
+                if operation == "instantiate" and not indata.get("force"):
+                    raise EngineException("netslice_instance '{}' cannot be '{}' because it is already instantiated".
+                                          format(nsiInstanceId, operation), HTTPStatus.CONFLICT)
+            
+            # Creating all the NS_operation (nslcmop)
+            # Get service list from db
+            nsrs_list = nsir["_admin"]["nsrs-detailed-list"]
+            nslcmops = []
+            for nsr_item in nsrs_list:
+                service = self.db.get_one("nsrs", {"_id": nsr_item["nsrId"]})
+                indata_ns = {}
+                indata_ns = service["instantiate_params"]
+                indata_ns["lcmOperationType"] = operation
+                indata_ns["nsInstanceId"] = service["_id"]
+                # Including netslice_id in the ns instantiate Operation
+                indata_ns["netsliceInstanceId"] = nsiInstanceId
+                del indata_ns["key-pair-ref"]
+                nsi_NsLcmOpTopic = NsLcmOpTopic(self.db, self.fs, self.msg)
+                # Creating NS_LCM_OP with the flag slice_object=True to not trigger the service instantiation 
+                # message via kafka bus
+                nslcmop = nsi_NsLcmOpTopic.new(rollback, session, indata_ns, kwargs, headers, force, slice_object=True)
+                nslcmops.append(nslcmop)
+
+            # Creates nsilcmop
+            indata["nslcmops_ids"] = nslcmops
+            self._check_nsi_operation(session, nsir, operation, indata)
+            nsilcmop_desc = self._create_nsilcmop(session, nsiInstanceId, operation, indata)
+            self.format_on_new(nsilcmop_desc, session["project_id"], make_public=make_public)
+            _id = self.db.create("nsilcmops", nsilcmop_desc)
+            rollback.append({"topic": "nsilcmops", "_id": _id})
+            self.msg.write("nsi", operation, nsilcmop_desc)
+            return _id
+        except ValidationError as e:
+            raise EngineException(e, HTTPStatus.UNPROCESSABLE_ENTITY)
+        # except DbException as e:
+        #     raise EngineException("Cannot get nsi_instance '{}': {}".format(e), HTTPStatus.NOT_FOUND)
 
     def delete(self, session, _id, force=False, dry_run=False):
         raise EngineException("Method delete called directly", HTTPStatus.INTERNAL_SERVER_ERROR)

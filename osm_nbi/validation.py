@@ -193,6 +193,7 @@ ns_instantiate = {
     "properties": {
         "lcmOperationType": string_schema,
         "nsInstanceId": id_schema,
+        "netsliceInstanceId": id_schema,
         "nsName": name_schema,
         "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
@@ -558,6 +559,38 @@ nbi_edit_input_schemas = {
     "vim_accounts": vim_account_edit_schema,
     "sdns": sdn_edit_schema,
     "pdus": pdu_edit_schema,
+}
+
+# NETSLICE SCHEMAS
+nsi_instantiate = {
+    "title": "netslice action instantiate input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "lcmOperationType": string_schema,
+        "nsiInstanceId": id_schema,
+        "nsiName": name_schema,
+        "nsiDescription": {"oneOf": [description_schema, {"type": "null"}]},
+        "nstdId": string_schema,
+        "vimAccountId": id_schema,
+        "ssh_keys": {"type": "string"},
+        "nsi_id": id_schema,
+        "ns": {
+            "type": "array",
+            "minItems": 1,
+            "items": ns_instantiate
+        },
+    },
+    "required": ["nsiName", "nstdId", "vimAccountId"],
+    "additionalProperties": False
+}
+
+nsi_action = {
+
+}
+
+nsi_terminate = {
+    
 }
 
 

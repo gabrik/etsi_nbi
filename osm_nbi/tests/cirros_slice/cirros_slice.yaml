@@ -1,0 +1,17 @@
+nst:
+    nst:
+    -   id: cirros_nst
+        name: cirros_netslice_template
+        SNSSAI-identifier:
+        -   slice-service-type: eMBB
+        quality-of-service:
+        -   id: 1
+        netslice-subnet:
+        -   id: cirros_nsd
+            is-shared-nss: 'false'
+            description: Slice example for osm-5.0
+            nsd-ref: cirros_nsd
+            instantiation-parameters:
+            -   nsName: cirros_nsd
+                nsdId: cirros_nsd
+                vimAccountId: openstack_18

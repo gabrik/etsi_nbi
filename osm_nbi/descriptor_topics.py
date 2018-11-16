@@ -664,6 +664,79 @@ class NsdTopic(DescriptorTopic):
             raise EngineException("There is some NSR that depends on this NSD", http_code=HTTPStatus.CONFLICT)
 
 
+class NstTopic(DescriptorTopic):
+    topic = "nsts"
+    topic_msg = "nst"
+
+    def __init__(self, db, fs, msg):
+        DescriptorTopic.__init__(self, db, fs, msg)
+
+    @staticmethod
+    def _remove_envelop(indata=None):
+        if not indata:
+            return {}
+        clean_indata = indata
+
+        if clean_indata.get('nst:nst'):
+            clean_indata = clean_indata['nst:nst']
+        elif clean_indata.get('nst'):
+            clean_indata = clean_indata['nst']
+        if clean_indata.get('nst'):
+            if not isinstance(clean_indata['nst'], list) or len(clean_indata['nst']) != 1:
+                raise EngineException("'nst' must be a list only one element")
+            clean_indata = clean_indata['nst'][0]
+        return clean_indata
+
+    def _validate_input_edit(self, indata, force=False):
+        # TODO validate with pyangbind, serialize
+        return indata
+
+    def _check_descriptor_dependencies(self, session, descriptor):
+        """
+        Check that the dependent descriptors exist on a new descriptor or edition
+        :param session: client session information
+        :param descriptor: descriptor to be inserted or edit
+        :return: None or raises exception
+        """
+        if not descriptor.get("netslice-subnet"):
+            return
+        for nsd in descriptor["netslice-subnet"]:
+            nsd_id = nsd["nsd-ref"]
+            filter_q = self._get_project_filter(session, write=False, show_all=True)
+            filter_q["id"] = nsd_id
+            if not self.db.get_list("nsds", filter_q):
+                raise EngineException("Descriptor error at 'netslice-subnet':'nsd-ref'='{}' references a non "
+                                      "existing nsd".format(nsd_id), http_code=HTTPStatus.CONFLICT)
+
+    def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
+        super().check_conflict_on_edit(session, final_content, edit_content, _id, force=force)
+
+        self._check_descriptor_dependencies(session, final_content)
+
+    def check_conflict_on_del(self, session, _id, force=False):
+        """
+        Check that there is not any NSIR that uses this NST. Only NSIRs belonging to this project are considered. Note
+        that NST can be public and be used by other projects.
+        :param session:
+        :param _id: nst internal id
+        :param force: Avoid this checking
+        :return: None or raises EngineException with the conflict
+        """
+        # TODO: Check this method
+        if force:
+            return
+        # Get Network Slice Template from Database
+        _filter = self._get_project_filter(session, write=False, show_all=False)
+        _filter["_id"] = _id
+        nst = self.db.get_one("nst", _filter)
+        
+        # Search NSIs using NST via nst-ref
+        _filter = self._get_project_filter(session, write=False, show_all=False)
+        _filter["nst-ref"] = nst["id"]
+        if self.db.get_list("nsis", _filter):
+            raise EngineException("There is some NSIS that depends on this NST", http_code=HTTPStatus.CONFLICT)
+
+
 class PduTopic(BaseTopic):
     topic = "pdus"
     topic_msg = "pdu"
