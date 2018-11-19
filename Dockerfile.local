@@ -57,7 +57,7 @@ ENV OSMNBI_DATABASE_PORT                        27017
 # web
 ENV OSMNBI_STATIC_DIR                           /app/NBI/osm_nbi/html_public
 # logs
-# ENV OSMNBI_LOG_FILE                             /app/log
+# ENV OSMNBI_LOG_FILE                             /app/log/nbi.log
 ENV OSMNBI_LOG_LEVEL                            DEBUG
 # message
 ENV OSMNBI_MESSAGE_DRIVER                       kafka

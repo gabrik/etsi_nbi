@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Copyright 2018 Telefonica S.A.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 from setuptools import setup
@@ -28,20 +44,20 @@ setup(
     packages=[_name],
     include_package_data=True,
     # exclude_package_data={'': ['osm_nbi/local', 'temp']},
-    data_files=[('/etc/osm/', ['osm_nbi/nbi.cfg']),
-                ('/etc/systemd/system/', ['osm_nbi/osm-nbi.service']),
-                ],
+    # data_files=[('/etc/osm/', ['osm_nbi/nbi.cfg']),
+    #             ('/etc/systemd/system/', ['osm_nbi/osm-nbi.service']),
+    #             ],
     dependency_links=[
-        "git+https://osm.etsi.org/gerrit/osm/common.git@master#egg=osm-common-0.1.4"
+        "git+https://osm.etsi.org/gerrit/osm/IM.git#egg=osm-im",
+        'git+https://osm.etsi.org/gerrit/osm/common.git#egg=osm-common'
     ],
     install_requires=[
-        'CherryPy', 'pymongo', 'jsonschema', 'PyYAML', 'python-keystoneclient'
-        # 'osm-common',
+        'CherryPy==18.0.0',
+        'osm-common',
+        'jsonschema',
+        'PyYAML',
+        'osm-im',
+        'python-keystoneclient'
     ],
     setup_requires=['setuptools-version-command'],
-    # test_suite='nose.collector',
-    # entry_points='''
-    #     [console_scripts]
-    #     osm=osm_nbi.nbi:nbi
-    #     ''',
 )
