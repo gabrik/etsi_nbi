@@ -37,6 +37,8 @@ class DescriptorTopic(BaseTopic):
         for k, v in internal_keys.items():
             final_content[k] = v
 
+        if force:
+            return
         # 2. check that this id is not present
         if "id" in edit_content:
             _filter = self._get_project_filter(session, write=False, show_all=False)
@@ -140,7 +142,7 @@ class DescriptorTopic(BaseTopic):
         :param kwargs: user query string to override parameters. NOT USED
         :param headers:  http request headers
         :param force: to be more tolerant with validation
-        :return: True package has is completely uploaded or False if partial content has been uplodaed.
+        :return: True if package is completely uploaded or False if partial content has been uploded
             Raise exception on error
         """
         # Check that _id exists and it is valid
@@ -264,7 +266,7 @@ class DescriptorTopic(BaseTopic):
             if kwargs:
                 self._update_input_with_kwargs(indata, kwargs)
             # it will call overrides method at VnfdTopic or NsdTopic
-            indata = self._validate_input_new(indata, force=force)
+            # indata = self._validate_input_edit(indata, force=force)
 
             deep_update_rfc7396(current_desc, indata)
             self.check_conflict_on_edit(session, current_desc, indata, _id=_id, force=force)
@@ -617,35 +619,82 @@ class NsdTopic(DescriptorTopic):
 
     def _validate_input_new(self, indata, force=False):
         indata = self.pyangbind_validation("nsds", indata, force)
+        # Cross references validation in the descriptor
         # TODO validata that if contains cloud-init-file or charms, have artifacts _admin.storage."pkg-dir" is not none
+        for vld in get_iterable(indata.get("vld")):
+            for vnfd_cp in get_iterable(vld.get("vnfd-connection-point-ref")):
+                for constituent_vnfd in get_iterable(indata.get("constituent-vnfd")):
+                    if vnfd_cp["member-vnf-index-ref"] == constituent_vnfd["member-vnf-index"]:
+                        if vnfd_cp.get("vnfd-id-ref") and vnfd_cp["vnfd-id-ref"] != constituent_vnfd["vnfd-id-ref"]:
+                            raise EngineException("Error at vld[id='{}']:vnfd-connection-point-ref[vnfd-id-ref='{}'] "
+                                                  "does not match constituent-vnfd[member-vnf-index='{}']:vnfd-id-ref"
+                                                  " '{}'".format(vld["id"], vnfd_cp["vnfd-id-ref"],
+                                                                 constituent_vnfd["member-vnf-index"],
+                                                                 constituent_vnfd["vnfd-id-ref"]),
+                                                  http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+                        break
+                else:
+                    raise EngineException("Error at vld[id='{}']:vnfd-connection-point-ref[member-vnf-index-ref='{}'] "
+                                          "does not match any constituent-vnfd:member-vnf-index"
+                                          .format(vld["id"], vnfd_cp["member-vnf-index-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
         return indata
 
     def _validate_input_edit(self, indata, force=False):
         # not needed to validate with pyangbind becuase it will be validated at check_conflict_on_edit
         return indata
 
-    def _check_descriptor_dependencies(self, session, descriptor):
+    def _check_descriptor_dependencies(self, session, descriptor, force=False):
         """
-        Check that the dependent descriptors exist on a new descriptor or edition
+        Check that the dependent descriptors exist on a new descriptor or edition. Also checks references to vnfd
+        connection points are ok
         :param session: client session information
         :param descriptor: descriptor to be inserted or edit
+        :param force: if true skip dependencies checking
         :return: None or raises exception
         """
-        if not descriptor.get("constituent-vnfd"):
+        if force:
             return
-        for vnf in descriptor["constituent-vnfd"]:
-            vnfd_id = vnf["vnfd-id-ref"]
-            filter_q = self._get_project_filter(session, write=False, show_all=True)
-            filter_q["id"] = vnfd_id
-            if not self.db.get_list("vnfds", filter_q):
-                raise EngineException("Descriptor error at 'constituent-vnfd':'vnfd-id-ref'='{}' references a non "
-                                      "existing vnfd".format(vnfd_id), http_code=HTTPStatus.CONFLICT)
+        member_vnfd_index = {}
+        if descriptor.get("constituent-vnfd") and not force:
+            for vnf in descriptor["constituent-vnfd"]:
+                vnfd_id = vnf["vnfd-id-ref"]
+                filter_q = self._get_project_filter(session, write=False, show_all=True)
+                filter_q["id"] = vnfd_id
+                vnf_list = self.db.get_list("vnfds", filter_q)
+                if not vnf_list:
+                    raise EngineException("Descriptor error at 'constituent-vnfd':'vnfd-id-ref'='{}' references a non "
+                                          "existing vnfd".format(vnfd_id), http_code=HTTPStatus.CONFLICT)
+                # elif len(vnf_list) > 1:
+                #     raise EngineException("More than one vnfd found for id='{}'".format(vnfd_id),
+                #                           http_code=HTTPStatus.CONFLICT)
+                member_vnfd_index[vnf["member-vnf-index"]] = vnf_list[0]
+
+        # Cross references validation in the descriptor and vnfd connection point validation
+        for vld in get_iterable(descriptor.get("vld")):
+            for referenced_vnfd_cp in get_iterable(vld.get("vnfd-connection-point-ref")):
+                # look if this vnfd contains this connection point
+                vnfd = member_vnfd_index.get(referenced_vnfd_cp["member-vnf-index-ref"])
+                if not vnfd:
+                    raise EngineException("Error at vld[id='{}']:vnfd-connection-point-ref[member-vnf-index-ref='{}'] "
+                                          "does not match any constituent-vnfd:member-vnf-index"
+                                          .format(vld["id"], referenced_vnfd_cp["member-vnf-index-ref"]),
+                                          http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
+                for vnfd_cp in get_iterable(vnfd.get("connection-point")):
+                    if referenced_vnfd_cp.get("vnfd-connection-point-ref") == vnfd_cp["name"]:
+                        break
+                else:
+                    raise EngineException(
+                        "Error at vld[id='{}']:vnfd-connection-point-ref[member-vnf-index-ref='{}']:vnfd-"
+                        "connection-point-ref='{}' references a non existing conection-point:name inside vnfd '{}'"
+                        .format(vld["id"], referenced_vnfd_cp["member-vnf-index-ref"],
+                                referenced_vnfd_cp["vnfd-connection-point-ref"], vnfd["id"]),
+                        http_code=HTTPStatus.UNPROCESSABLE_ENTITY)
 
     def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
         super().check_conflict_on_edit(session, final_content, edit_content, _id, force=force)
 
-        if not force:
-            self._check_descriptor_dependencies(session, final_content)
+        self._check_descriptor_dependencies(session, final_content, force)
 
     def check_conflict_on_del(self, session, _id, force=False):
         """
