@@ -17,7 +17,7 @@
 # limitations under the License.
 
 import os
-from setuptools import setup
+from setuptools import setup, find_packages
 
 _name = "osm_nbi"
 # version is at first line of osm_nbi/html_public/version
@@ -41,7 +41,7 @@ setup(
     url='https://osm.etsi.org/gitweb/?p=osm/NBI.git;a=summary',
     license='Apache 2.0',
 
-    packages=[_name],
+    packages=find_packages(exclude=["temp", "local"]),
     include_package_data=True,
     # exclude_package_data={'': ['osm_nbi/local', 'temp']},
     # data_files=[('/etc/osm/', ['osm_nbi/nbi.cfg']),
