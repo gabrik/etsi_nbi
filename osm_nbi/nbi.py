@@ -850,7 +850,7 @@ class Server(object):
                 cherrypy.log("Exception {}".format(e))
             else:
                 http_code_value = cherrypy.response.status = HTTPStatus.BAD_REQUEST.value  # INTERNAL_SERVER_ERROR
-                cherrypy.log("CRITICAL: Exception {}".format(e))
+                cherrypy.log("CRITICAL: Exception {}".format(e), traceback=True)
                 http_code_name = HTTPStatus.BAD_REQUEST.name
             if hasattr(outdata, "close"):  # is an open file
                 outdata.close()

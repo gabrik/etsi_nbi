@@ -739,10 +739,6 @@ class NstTopic(DescriptorTopic):
             return {}
         clean_indata = indata
 
-        if clean_indata.get('nst:nst'):
-            clean_indata = clean_indata['nst:nst']
-        elif clean_indata.get('nst'):
-            clean_indata = clean_indata['nst']
         if clean_indata.get('nst'):
             if not isinstance(clean_indata['nst'], list) or len(clean_indata['nst']) != 1:
                 raise EngineException("'nst' must be a list only one element")
@@ -752,6 +748,9 @@ class NstTopic(DescriptorTopic):
     def _validate_input_edit(self, indata, force=False):
         # TODO validate with pyangbind, serialize
         return indata
+
+    def _validate_input_new(self, indata, force=False):
+        return indata.copy()
 
     def _check_descriptor_dependencies(self, session, descriptor):
         """
@@ -790,13 +789,15 @@ class NstTopic(DescriptorTopic):
         # Get Network Slice Template from Database
         _filter = self._get_project_filter(session, write=False, show_all=False)
         _filter["_id"] = _id
-        nst = self.db.get_one("nst", _filter)
+        nst = self.db.get_one("nsts", _filter)
         
         # Search NSIs using NST via nst-ref
         _filter = self._get_project_filter(session, write=False, show_all=False)
         _filter["nst-ref"] = nst["id"]
-        if self.db.get_list("nsis", _filter):
-            raise EngineException("There is some NSIS that depends on this NST", http_code=HTTPStatus.CONFLICT)
+        nsis_list = self.db.get_list("nsis", _filter)
+        for nsi_item in nsis_list:
+            if nsi_item["_admin"].get("nsiState") != "TERMINATED":
+                raise EngineException("There is some NSIS that depends on this NST", http_code=HTTPStatus.CONFLICT)
 
 
 class PduTopic(BaseTopic):

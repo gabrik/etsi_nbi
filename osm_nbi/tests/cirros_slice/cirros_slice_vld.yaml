@@ -11,9 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 nst:
--   id: 'cirros_nst'
+-   id: cirros_nst
     name: cirros_netslice_template
     SNSSAI-identifier:
     -   slice-service-type: eMBB
@@ -23,12 +22,22 @@ nst:
     -   id: cirros_nsd_1
         is-shared-nss: 'false'
         description: Slice example for osm-5.0
-        nsd-ref: 'cirros_2vnf_nsd'
+        nsd-ref: cirros_nsd
         instantiation-parameters:
-            vimAccountId: Openstack_7.18
+        -   nsName: cirros_nsd
+            nsdId: cirros_nsd
+            vimAccountId: openstack_18
     -   id: cirros_nsd_2
         is-shared-nss: 'false'
         description: Slice example for osm-5.0
-        nsd-ref: 'cirros_2vnf_nsd'
+        nsd-ref: cirros_nsd
         instantiation-parameters:
-            vimAccountId: Openstack_7.18
+        -   nsName: cirros_nsd
+            nsdId: cirros_nsd
+            vimAccountId: openstack_18
+    netslice-vld:
+    -   id: slice_cirros_vld1
+        name: slice_cirros_vld1
+        nsd-connection-point-ref:
+        -   nsd-ref: cirros_nsd
+            nsd-connection-point-ref: cirros_nsd_vld1

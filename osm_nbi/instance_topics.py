@@ -836,7 +836,7 @@ class NsiTopic(BaseTopic):
             for service in services:
                 indata_ns = {}
                 indata_ns["nsdId"] = service["_id"]
-                indata_ns["nsName"] = service["name"]
+                indata_ns["nsName"] = service["id"]
                 indata_ns["vimAccountId"] = indata.get("vimAccountId")
                 indata_ns["nsDescription"] = service["description"]
                 indata_ns["key-pair-ref"] = None

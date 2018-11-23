@@ -1599,7 +1599,7 @@ class TestDescriptors:
         self.step += 1
 
 
-class TestNstTemplates:
+class TestNetSliceTemplates:
     description = "Upload a NST to OSM"
 
     def __init__(self):
@@ -1622,6 +1622,64 @@ class TestNstTemplates:
 
         # nstd DELETE
         r = engine.test("NST3", "Delete NSTD", "DELETE", 
+                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
+                        204, None, 0)
+
+
+class TestNetSliceInstances:
+    description = "Upload a NST to OSM"
+
+    def __init__(self):
+        self.nst_filenames = ("@./cirros_slice/cirros_slice.yaml")
+
+    def run(self, engine, test_osm, manual_check, test_params=None):
+        # nst CREATE
+        engine.get_autorization()
+        r = engine.test("NST1", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
+                        self.nst_filenames, 201, 
+                        {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
+        location = r.headers["Location"]
+        nst_id = location[location.rfind("/")+1:]
+
+        # nsi CREATE
+        if test_osm:
+            self.vim_id = engine.get_create_vim(test_osm)
+        else:
+            r = engine.test("VIM1", "Get available VIM", "GET", "/admin/v1/vim_accounts",
+                            headers_json, None, None, r_header_json, "json")       
+            r_json = json.loads(r.text)
+            vim = r_json[0]
+            self.vim_id = vim["_id"]
+            
+        ns_data = {"nsiDescription": "default description", "nsiName": "my_slice", "nstdId": "cirros_nst",
+                   "vimAccountId": self.vim_id}
+        ns_data_text = yaml.safe_dump(ns_data, default_flow_style=True, width=256)
+
+        r = engine.test("NSI1", "Onboard NSI", "POST", "/nsilcm/v1/netslice_instances_content", headers_yaml, 
+                        ns_data_text, 201, 
+                        {"Location": "/nsilcm/v1/netslice_instances_content", "Content-Type": 
+                         "application/yaml"}, "yaml")
+        location = r.headers["Location"]
+        nsi_id = location[location.rfind("/")+1:]
+        
+        # TODO: Improve the wait with a polling if NSI was deployed
+        wait = 120
+        sleep(wait)
+
+        # Check deployment
+        r = engine.test("NSI2", "Wait until NSI is deployed", "GET", 
+                        "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id), headers_json, None, 
+                        200, r_header_json, "json")                                
+ 
+        # nsi DELETE
+        r = engine.test("NSI3", "Delete NSI", "DELETE", 
+                        "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id), headers_json, None, 
+                        202, r_header_json, "json")
+        
+        sleep(60)
+
+        # nstd DELETE
+        r = engine.test("NST2", "Delete NSTD", "DELETE", 
                         "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
                         204, None, 0)
 
@@ -1662,7 +1720,8 @@ if __name__ == "__main__":
             # "Deploy-MultiVIM": TestDeployMultiVIM,
             "DeploySingleVdu": TestDeploySingleVdu,
             "DeployHnfd": TestDeployHnfd,
-            "Upload-Slice-Template": TestNstTemplates,
+            "Upload-Slice-Template": TestNetSliceTemplates,
+            "Deploy-Slice-Instance": TestNetSliceInstances,
         }
         test_to_do = []
         test_params = {}
