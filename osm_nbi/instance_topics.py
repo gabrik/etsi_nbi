@@ -830,6 +830,8 @@ class NsiTopic(BaseTopic):
             self.format_on_new(nsi_descriptor, session["project_id"], make_public=make_public)
             nsi_descriptor["_admin"]["nsiState"] = "NOT_INSTANTIATED"          
 
+            ns_params = indata.get("ns")
+            
             # creates Network Services records (NSRs)
             step = "creating nsrs at database using NsrTopic.new()"
             nsrs_list = []
@@ -841,6 +843,11 @@ class NsiTopic(BaseTopic):
                 indata_ns["nsDescription"] = service["description"]
                 indata_ns["key-pair-ref"] = None
                 # NsrTopic(rollback, session, indata_ns, kwargs, headers, force)
+                # Overwriting ns_params filtering by nsName == netslice-subnet.id
+                if ns_params:
+                    for ns_param in ns_params:
+                        if ns_param["nsName"] == service["id"]:
+                            indata_ns.update(ns_param)
                 _id_nsr = NsrTopic.new(self, rollback, session, indata_ns, kwargs, headers, force)
                 nsrs_item = {"nsrId": _id_nsr}
                 nsrs_list.append(nsrs_item)
