@@ -24,6 +24,7 @@ from validation import ValidationError, pdu_new_schema, pdu_edit_schema
 from base_topic import BaseTopic, EngineException, get_iterable
 from osm_im.vnfd import vnfd as vnfd_im
 from osm_im.nsd import nsd as nsd_im
+from osm_im.nst import nst as nst_im
 from pyangbind.lib.serialise import pybindJSONDecoder
 import pyangbind.lib.pybindJSON as pybindJSON
 
@@ -378,6 +379,11 @@ class DescriptorTopic(BaseTopic):
                 pybindJSONDecoder.load_ietf_json({'nsd:nsd-catalog': {'nsd': [data]}}, None, None, obj=mynsd,
                                                  path_helper=True, skip_unknown=force)
                 out = pybindJSON.dumps(mynsd, mode="ietf")
+            elif item == "nsts":
+                mynst = nst_im()
+                pybindJSONDecoder.load_ietf_json({'nst': [data]}, None, None, obj=mynst,
+                                                 path_helper=True, skip_unknown=force)
+                out = pybindJSON.dumps(mynst, mode="ietf")
             else:
                 raise EngineException("Not possible to validate '{}' item".format(item),
                                       http_code=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -743,6 +749,10 @@ class NstTopic(DescriptorTopic):
             if not isinstance(clean_indata['nst'], list) or len(clean_indata['nst']) != 1:
                 raise EngineException("'nst' must be a list only one element")
             clean_indata = clean_indata['nst'][0]
+        elif clean_indata.get('nst:nst'):
+            if not isinstance(clean_indata['nst:nst'], list) or len(clean_indata['nst:nst']) != 1:
+                raise EngineException("'nst:nst' must be a list only one element")
+            clean_indata = clean_indata['nst:nst'][0]
         return clean_indata
 
     def _validate_input_edit(self, indata, force=False):
@@ -750,6 +760,7 @@ class NstTopic(DescriptorTopic):
         return indata
 
     def _validate_input_new(self, indata, force=False):
+        indata = self.pyangbind_validation("nsts", indata, force)
         return indata.copy()
 
     def _check_descriptor_dependencies(self, session, descriptor):
