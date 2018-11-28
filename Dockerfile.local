@@ -40,6 +40,7 @@ RUN pip3 install pyang && mkdir -p /app && cd /app \
     && mkdir /app/IM/osm_im \
     && pyang --plugindir /app/pyangbind/pyangbind/plugin -f pybind -o /app/IM/osm_im/vnfd.py vnfd.yang \
     && pyang --plugindir /app/pyangbind/pyangbind/plugin -f pybind -o /app/IM/osm_im/nsd.py nsd.yang \
+    && pyang --plugindir /app/pyangbind/pyangbind/plugin -f pybind -o /app/IM/osm_im/nst.py nst.yang \
     && pip3 install -e /app/IM
 
 EXPOSE 9999

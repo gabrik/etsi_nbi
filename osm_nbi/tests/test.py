@@ -23,7 +23,9 @@ import yaml
 # import json
 # import tarfile
 from time import sleep
+from random import randint
 import os
+from sys import stderr
 
 __author__ = "Alfonso Tierno, alfonso.tiernosepulveda@telefonica.com"
 __date__ = "$2018-03-01$"
@@ -34,7 +36,7 @@ version_date = "Oct 2018"
 def usage():
     print("Usage: ", sys.argv[0], "[options]")
     print("      Performs system tests over running NBI. It can be used for real OSM test using option '--test-osm'")
-    print("      If this is the case env variables 'OSMNBITEST_VIM_NAME' must be suplied to create a VIM if not exist "
+    print("      If this is the case env variables 'OSMNBITEST_VIM_NAME' must be supplied to create a VIM if not exist "
           "where deployment is done")
     print("OPTIONS")
     print("      -h|--help: shows this help")
@@ -127,11 +129,17 @@ class TestRest:
         self.project = project
         self.vim_id = None
         # contains ID of tests obtained from Location response header. "" key contains last obtained id
-        self.test_ids = {}
-        self.old_test_description = ""
+        self.last_id = ""
         self.test_name = None
-        self.step = 0
+        self.step = 0   # number of subtest under test
+        self.passed_tests = 0
+        self.failed_tests = 0
 
+    def set_test_name(self, test_name):
+        self.test_name = test_name
+        self.step = 0
+        self.last_id = ""
+        
     def set_header(self, header):
         self.s.headers.update(header)
 
@@ -142,12 +150,11 @@ class TestRest:
         if key in self.s.headers:
             del self.s.headers[key]
 
-    def test(self, name, description, method, url, headers, payload, expected_codes, expected_headers,
-             expected_payload, store_file=None):
+    def test(self, description, method, url, headers, payload, expected_codes, expected_headers,
+             expected_payload, store_file=None, pooling=False):
         """
         Performs an http request and check http code response. Exit if different than allowed. It get the returned id
         that can be used by following test in the URL with {name} where name is the name of the test
-        :param name:  short name of the test
         :param description:  description of the test
         :param method: HTTP method: GET,PUT,POST,DELETE,...
         :param url: complete URL or relative URL
@@ -157,6 +164,7 @@ class TestRest:
         :param expected_headers: expected response headers, dict with key values
         :param expected_payload: expected payload, 0 if empty, 'yaml', 'json', 'text', 'zip', 'octet-stream'
         :param store_file: filename to store content
+        :param pooling: if True do not count neither log this test. Because a pooling is done with many equal requests
         :return: requests response
         """
         r = None
@@ -169,16 +177,8 @@ class TestRest:
             elif not url.startswith("http"):
                 url = self.url_base + url
 
-            var_start = url.find("<") + 1
-            while var_start:
-                var_end = url.find(">", var_start)
-                if var_end == -1:
-                    break
-                var_name = url[var_start:var_end]
-                if var_name in self.test_ids:
-                    url = url[:var_start-1] + self.test_ids[var_name] + url[var_end+1:]
-                    var_start += len(self.test_ids[var_name])
-                var_start = url.find("<", var_start) + 1
+            # replace url <> with the last ID
+            url = url.replace("<>", self.last_id)
             if payload:
                 if isinstance(payload, str):
                     if payload.startswith("@"):
@@ -192,10 +192,10 @@ class TestRest:
                 elif isinstance(payload, dict):
                     payload = json.dumps(payload)
 
-            test_description = "Test {} {} {} {}".format(name, description, method, url)
-            if self.old_test_description != test_description:
-                self.old_test_description = test_description
+            if not pooling:
+                test_description = "Test {}{} {} {} {}".format(self.test_name, self.step, description, method, url)
                 logger.warning(test_description)
+                self.step += 1
             stream = False
             if expected_payload in ("zip", "octet-string") or store_file:
                 stream = True
@@ -257,21 +257,28 @@ class TestRest:
             if location:
                 _id = location[location.rfind("/") + 1:]
                 if _id:
-                    self.test_ids[name] = str(_id)
-                    self.test_ids["last_id"] = str(_id)  # last id
-                    self.test_ids[""] = str(_id)  # last id
+                    self.last_id = str(_id)
+            if not pooling:
+                self.passed_tests += 1
             return r
         except TestException as e:
+            self.failed_tests += 1
             r_status_code = None
             r_text = None
             if r:
                 r_status_code = r.status_code
                 r_text = r.text
             logger.error("{} \nRX code{}: {}".format(e, r_status_code, r_text))
-            exit(1)
+            return None
+            # exit(1)
         except IOError as e:
-            logger.error("Cannot open file {}".format(e))
-            exit(1)
+            if store_file:
+                logger.error("Cannot open file {}: {}".format(store_file, e))
+            else:
+                logger.error("Exception: {}".format(e), exc_info=True)
+            self.failed_tests += 1
+            return None
+            # exit(1)
 
     def get_autorization(self):  # user=None, password=None, project=None):
         if self.token:  # and self.user == user and self.password == password and self.project == project:
@@ -279,16 +286,18 @@ class TestRest:
         # self.user = user
         # self.password = password
         # self.project = project
-        r = self.test("TOKEN", "Obtain token", "POST", "/admin/v1/tokens", headers_json,
+        r = self.test("Obtain token", "POST", "/admin/v1/tokens", headers_json,
                       {"username": self.user, "password": self.password, "project_id": self.project},
                       (200, 201), r_header_json, "json")
+        if not r:
+            return
         response = r.json()
         self.token = response["id"]
         self.set_header({"Authorization": "Bearer {}".format(self.token)})
 
     def remove_authorization(self):
         if self.token:
-            self.test("TOKEN_DEL", "Delete token", "DELETE", "/admin/v1/tokens/{}".format(self.token), headers_json,
+            self.test("Delete token", "DELETE", "/admin/v1/tokens/{}".format(self.token), headers_json,
                       None, (200, 201, 204), None, None)
         self.token = None
         self.unset_header("Authorization")
@@ -305,8 +314,10 @@ class TestRest:
         else:
             vim_name = "fakeVim"
         # Get VIM
-        r = self.test("_VIMGET1", "Get VIM ID", "GET", "/admin/v1/vim_accounts?name={}".format(vim_name), headers_json,
+        r = self.test("Get VIM ID", "GET", "/admin/v1/vim_accounts?name={}".format(vim_name), headers_json,
                       None, 200, r_header_json, "json")
+        if not r:
+            return
         vims = r.json()
         if vims:
             return vims[0]["_id"]
@@ -329,10 +340,90 @@ class TestRest:
         else:
             vim_data = "{schema_version: '1.0', name: fakeVim, vim_type: openstack, vim_url: 'http://10.11.12.13/fake'"\
                        ", vim_tenant_name: 'vimtenant', vim_user: vimuser, vim_password: vimpassword}"
-        r = self.test("_VIMGET2", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_yaml, vim_data,
-                      (201), {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/yaml"}, "yaml")
-        location = r.headers.get("Location")
-        return location[location.rfind("/") + 1:]
+        self.test("Create VIM", "POST", "/admin/v1/vim_accounts", headers_yaml, vim_data,
+                  (201), {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/yaml"}, "yaml")
+        return self.last_id
+
+    def print_results(self):
+        print("\n\n\n--------------------------------------------")
+        print("TEST RESULTS: Total: {}, Passed: {}, Failed: {}".format(self.passed_tests + self.failed_tests,
+                                                                       self.passed_tests, self.failed_tests))
+        print("--------------------------------------------")
+
+    def wait_until_delete(self, url_op, timeout_delete):
+        """
+        Make a pooling until topic is not present, because of deleted
+        :param url_op:
+        :param timeout_delete:
+        :return:
+        """
+        description = "Wait to topic being deleted"
+        test_description = "Test {}{} {} {} {}".format(self.test_name, self.step, description, "GET", url_op)
+        logger.warning(test_description)
+        self.step += 1
+
+        wait = timeout_delete
+        while wait >= 0:
+            r = self.test(description, "GET", url, headers_yaml, (200, 404), None, r_header_yaml, "yaml", pooling=True)
+            if not r:
+                return
+            if r.status_code == 404:
+                self.passed_tests += 1
+                break
+            elif r.status_code == 200:
+                wait -= 5
+                sleep(5)
+        else:
+            raise TestException("Topic is not deleted after {} seconds".format(timeout_delete))
+            self.failed_tests += 1
+
+    def wait_operation_ready(self, ns_nsi, opp_id, timeout, expected_fail=False):
+        """
+        Wait until nslcmop or nsilcmop finished
+        :param ns_nsi: "ns" o "nsi"
+        :param opp_id: Id o fthe operation
+        :param timeout:
+        :param expected_fail:
+        :return: None. Updates passed/failed_tests
+        """
+        if ns_nsi == "ns":
+            url_op = "/nslcm/v1/ns_lcm_op_occs/{}".format(opp_id)
+        else:
+            url_op = "/nsilcm/v1/nsi_lcm_op_occs/{}".format(opp_id)
+        description = "Wait to {} lcm operation complete".format(ns_nsi)
+        test_description = "Test {}{} {} {} {}".format(self.test_name, self.step, description, "GET", url_op)
+        logger.warning(test_description)
+        self.step += 1
+        wait = timeout
+        while wait >= 0:
+            r = self.test(description, "GET", url_op, headers_json, None,
+                          200, r_header_json, "json", pooling=True)
+            if not r:
+                return
+            nslcmop = r.json()
+            if "COMPLETED" in nslcmop["operationState"]:
+                if expected_fail:
+                    logger.error("NS terminate has success, expecting failing: {}".format(
+                        nslcmop["detailed-status"]))
+                    self.failed_tests += 1
+                else:
+                    self.passed_tests += 1
+                break
+            elif "FAILED" in nslcmop["operationState"]:
+                if not expected_fail:
+                    logger.error("NS terminate has failed: {}".format(nslcmop["detailed-status"]))
+                else:
+                    self.passed_tests += 1
+                break
+
+            print(".", end="", file=stderr)
+            wait -= 10
+            sleep(10)
+        else:
+            self.failed_tests += 1
+            logger.error("NS instantiate is not terminate after {} seconds".format(timeout))
+            return
+        print("", file=stderr)
 
 
 class TestNonAuthorized:
@@ -340,11 +431,12 @@ class TestNonAuthorized:
 
     @staticmethod
     def run(engine, test_osm, manual_check, test_params=None):
+        engine.set_test_name("NonAuth")
         engine.remove_authorization()
         test_not_authorized_list = (
-            ("NA1", "Invalid token", "GET", "/admin/v1/users", headers_json, None, 401, r_header_json, "json"),
-            ("NA2", "Invalid URL", "POST", "/admin/v1/nonexist", headers_yaml, None, 405, r_header_yaml, "yaml"),
-            ("NA3", "Invalid version", "DELETE", "/admin/v2/users", headers_yaml, None, 405, r_header_yaml, "yaml"),
+            ("Invalid token", "GET", "/admin/v1/users", headers_json, None, 401, r_header_json, "json"),
+            ("Invalid URL", "POST", "/admin/v1/nonexist", headers_yaml, None, 405, r_header_yaml, "yaml"),
+            ("Invalid version", "DELETE", "/admin/v2/users", headers_yaml, None, 405, r_header_yaml, "yaml"),
         )
         for t in test_not_authorized_list:
             engine.test(*t)
@@ -355,94 +447,100 @@ class TestUsersProjects:
 
     @staticmethod
     def run(engine, test_osm, manual_check, test_params=None):
+        engine.set_test_name("UserProject")
         engine.get_autorization()
-        engine.test("PU1", "Create project non admin", "POST", "/admin/v1/projects", headers_json, {"name": "P1"},
+        engine.test("Create project non admin", "POST", "/admin/v1/projects", headers_json, {"name": "P1"},
                     (201, 204), {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
-        engine.test("PU2", "Create project admin", "POST", "/admin/v1/projects", headers_json,
+        engine.test("Create project admin", "POST", "/admin/v1/projects", headers_json,
                     {"name": "Padmin", "admin": True}, (201, 204),
                     {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
-        engine.test("PU3", "Create project bad format", "POST", "/admin/v1/projects", headers_json, {"name": 1}, 422,
+        engine.test("Create project bad format", "POST", "/admin/v1/projects", headers_json, {"name": 1}, 422,
                     r_header_json, "json")
-        engine.test("PU4", "Create user with bad project", "POST", "/admin/v1/users", headers_json,
+        engine.test("Create user with bad project", "POST", "/admin/v1/users", headers_json,
                     {"username": "U1", "projects": ["P1", "P2", "Padmin"], "password": "pw1"}, 409,
                     r_header_json, "json")
-        engine.test("PU5", "Create user with bad project and force", "POST", "/admin/v1/users?FORCE=True", headers_json,
+        engine.test("Create user with bad project and force", "POST", "/admin/v1/users?FORCE=True", headers_json,
                     {"username": "U1", "projects": ["P1", "P2", "Padmin"], "password": "pw1"}, 201,
                     {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
-        engine.test("PU6", "Create user 2", "POST", "/admin/v1/users", headers_json,
+        engine.test("Create user 2", "POST", "/admin/v1/users", headers_json,
                     {"username": "U2", "projects": ["P1"], "password": "pw2"}, 201,
                     {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
-
-        engine.test("PU7", "Edit user U1, delete  P2 project", "PATCH", "/admin/v1/users/U1", headers_json,
+        engine.test("Edit user U1, delete  P2 project", "PATCH", "/admin/v1/users/U1", headers_json,
                     {"projects": {"$'P2'": None}}, 204, None, None)
-        res = engine.test("PU1", "Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
+        res = engine.test("Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
                           headers_json, None, 200, None, json)
-        u1 = res.json()
-        # print(u1)
-        expected_projects = ["P1", "Padmin"]
-        if u1["projects"] != expected_projects:
-            raise TestException("User content projects '{}' different than expected '{}'. Edition has not done"
-                                " properly".format(u1["projects"], expected_projects))
+        if res:
+            u1 = res.json()
+            # print(u1)
+            expected_projects = ["P1", "Padmin"]
+            if u1["projects"] != expected_projects:
+                logger.error("User content projects '{}' different than expected '{}'. Edition has not done"
+                             " properly".format(u1["projects"], expected_projects))
+                engine.failed_tests += 1
 
-        engine.test("PU8", "Edit user U1, set Padmin as default project", "PUT", "/admin/v1/users/U1", headers_json,
+        engine.test("Edit user U1, set Padmin as default project", "PUT", "/admin/v1/users/U1", headers_json,
                     {"projects": {"$'Padmin'": None, "$+[0]": "Padmin"}}, 204, None, None)
-        res = engine.test("PU1", "Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
+        res = engine.test("Check user U1, contains the right projects", "GET", "/admin/v1/users/U1",
                           headers_json, None, 200, None, json)
-        u1 = res.json()
-        # print(u1)
-        expected_projects = ["Padmin", "P1"]
-        if u1["projects"] != expected_projects:
-            raise TestException("User content projects '{}' different than expected '{}'. Edition has not done"
-                                " properly".format(u1["projects"], expected_projects))
+        if res:
+            u1 = res.json()
+            # print(u1)
+            expected_projects = ["Padmin", "P1"]
+            if u1["projects"] != expected_projects:
+                logger.error("User content projects '{}' different than expected '{}'. Edition has not done"
+                             " properly".format(u1["projects"], expected_projects))
+                engine.failed_tests += 1
 
-        engine.test("PU9", "Edit user U1, change password", "PATCH", "/admin/v1/users/U1", headers_json,
+        engine.test("Edit user U1, change password", "PATCH", "/admin/v1/users/U1", headers_json,
                     {"password": "pw1_new"}, 204, None, None)
 
-        engine.test("PU10", "Change to project P1 non existing", "POST", "/admin/v1/tokens/", headers_json,
+        engine.test("Change to project P1 non existing", "POST", "/admin/v1/tokens/", headers_json,
                     {"project_id": "P1"}, 401, r_header_json, "json")
 
-        res = engine.test("PU1", "Change to user U1 project P1", "POST", "/admin/v1/tokens", headers_json,
+        res = engine.test("Change to user U1 project P1", "POST", "/admin/v1/tokens", headers_json,
                           {"username": "U1", "password": "pw1_new", "project_id": "P1"}, (200, 201),
                           r_header_json, "json")
-        response = res.json()
-        engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
+        if res:
+            response = res.json()
+            engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
 
-        engine.test("PU11", "Edit user projects non admin", "PUT", "/admin/v1/users/U1", headers_json,
+        engine.test("Edit user projects non admin", "PUT", "/admin/v1/users/U1", headers_json,
                     {"projects": {"$'P1'": None}}, 401, r_header_json, "json")
-        engine.test("PU12", "Add new project non admin", "POST", "/admin/v1/projects", headers_json,
+        engine.test("Add new project non admin", "POST", "/admin/v1/projects", headers_json,
                     {"name": "P2"}, 401, r_header_json, "json")
-        engine.test("PU13", "Add new user non admin", "POST", "/admin/v1/users", headers_json,
+        engine.test("Add new user non admin", "POST", "/admin/v1/users", headers_json,
                     {"username": "U3", "projects": ["P1"], "password": "pw3"}, 401,
                     r_header_json, "json")
 
-        res = engine.test("PU14", "Change to user U1 project Padmin", "POST", "/admin/v1/tokens", headers_json,
+        res = engine.test("Change to user U1 project Padmin", "POST", "/admin/v1/tokens", headers_json,
                           {"project_id": "Padmin"}, (200, 201), r_header_json, "json")
-        response = res.json()
-        engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
+        if res:
+            response = res.json()
+            engine.set_header({"Authorization": "Bearer {}".format(response["id"])})
 
-        engine.test("PU15", "Add new project admin", "POST", "/admin/v1/projects", headers_json, {"name": "P2"},
+        engine.test("Add new project admin", "POST", "/admin/v1/projects", headers_json, {"name": "P2"},
                     (201, 204), {"Location": "/admin/v1/projects/", "Content-Type": "application/json"}, "json")
-        engine.test("PU16", "Add new user U3 admin", "POST", "/admin/v1/users",
+        engine.test("Add new user U3 admin", "POST", "/admin/v1/users",
                     headers_json, {"username": "U3", "projects": ["P2"], "password": "pw3"}, (201, 204),
                     {"Location": "/admin/v1/users/", "Content-Type": "application/json"}, "json")
-        engine.test("PU17", "Edit user projects admin", "PUT", "/admin/v1/users/U3", headers_json,
+        engine.test("Edit user projects admin", "PUT", "/admin/v1/users/U3", headers_json,
                     {"projects": ["P2"]}, 204, None, None)
 
-        engine.test("PU18", "Delete project P2 conflict", "DELETE", "/admin/v1/projects/P2", headers_json, None, 409,
+        engine.test("Delete project P2 conflict", "DELETE", "/admin/v1/projects/P2", headers_json, None, 409,
                     r_header_json, "json")
-        engine.test("PU19", "Delete project P2 forcing", "DELETE", "/admin/v1/projects/P2?FORCE=True", headers_json,
+        engine.test("Delete project P2 forcing", "DELETE", "/admin/v1/projects/P2?FORCE=True", headers_json,
                     None, 204, None, None)
 
-        engine.test("PU20", "Delete user U1. Conflict deleting own user", "DELETE", "/admin/v1/users/U1", headers_json,
+        engine.test("Delete user U1. Conflict deleting own user", "DELETE", "/admin/v1/users/U1", headers_json,
                     None, 409, r_header_json, "json")
-        engine.test("PU21", "Delete user U2", "DELETE", "/admin/v1/users/U2", headers_json, None, 204, None, None)
-        engine.test("PU22", "Delete user U3", "DELETE", "/admin/v1/users/U3", headers_json, None, 204, None, None)
+        engine.test("Delete user U2", "DELETE", "/admin/v1/users/U2", headers_json, None, 204, None, None)
+        engine.test("Delete user U3", "DELETE", "/admin/v1/users/U3", headers_json, None, 204, None, None)
         # change to admin
         engine.remove_authorization()   # To force get authorization
         engine.get_autorization()
-        engine.test("PU23", "Delete user U1", "DELETE", "/admin/v1/users/U1", headers_json, None, 204, None, None)
-        engine.test("PU24", "Delete project P1", "DELETE", "/admin/v1/projects/P1", headers_json, None, 204, None, None)
-        engine.test("PU25", "Delete project Padmin", "DELETE", "/admin/v1/projects/Padmin", headers_json, None, 204,
+        engine.test("Delete user U1", "DELETE", "/admin/v1/users/U1", headers_json, None, 204, None, None)
+        engine.test("Delete project P1", "DELETE", "/admin/v1/projects/P1", headers_json, None, 204, None, None)
+        engine.test("Delete project Padmin", "DELETE", "/admin/v1/projects/Padmin", headers_json, None, 204,
                     None, None)
 
 
@@ -489,38 +587,30 @@ class TestFakeVim:
         vim_bad = self.vim.copy()
         vim_bad.pop("name")
 
+        engine.set_test_name("FakeVim")
         engine.get_autorization()
-        engine.test("FVIM1", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (201, 204),
+        engine.test("Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (201, 204),
                     {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json")
-        engine.test("FVIM2", "Create VIM without name, bad schema", "POST", "/admin/v1/vim_accounts", headers_json,
+        vim_id = engine.last_id
+        engine.test("Create VIM without name, bad schema", "POST", "/admin/v1/vim_accounts", headers_json,
                     vim_bad, 422, None, headers_json)
-        engine.test("FVIM3", "Create VIM name repeated", "POST", "/admin/v1/vim_accounts", headers_json, self.vim,
+        engine.test("Create VIM name repeated", "POST", "/admin/v1/vim_accounts", headers_json, self.vim,
                     409, None, headers_json)
-        engine.test("FVIM4", "Show VIMs", "GET", "/admin/v1/vim_accounts", headers_yaml, None, 200, r_header_yaml,
+        engine.test("Show VIMs", "GET", "/admin/v1/vim_accounts", headers_yaml, None, 200, r_header_yaml,
                     "yaml")
-        engine.test("FVIM5", "Show VIM", "GET", "/admin/v1/vim_accounts/<FVIM1>", headers_yaml, None, 200,
+        engine.test("Show VIM", "GET", "/admin/v1/vim_accounts/{}".format(vim_id), headers_yaml, None, 200,
                     r_header_yaml, "yaml")
         if not test_osm:
             # delete with FORCE
-            engine.test("FVIM6", "Delete VIM", "DELETE", "/admin/v1/vim_accounts/<FVIM1>?FORCE=True", headers_yaml,
+            engine.test("Delete VIM", "DELETE", "/admin/v1/vim_accounts/{}?FORCE=True".format(vim_id), headers_yaml,
                         None, 202, None, 0)
-            engine.test("FVIM7", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<FVIM1>", headers_yaml, None,
+            engine.test("Check VIM is deleted", "GET", "/admin/v1/vim_accounts/{}".format(vim_id), headers_yaml, None,
                         404, r_header_yaml, "yaml")
         else:
             # delete and wait until is really deleted
-            engine.test("FVIM6", "Delete VIM", "DELETE", "/admin/v1/vim_accounts/<FVIM1>", headers_yaml, None, 202,
+            engine.test("Delete VIM", "DELETE", "/admin/v1/vim_accounts/{}".format(vim_id), headers_yaml, None, 202,
                         None, 0)
-            wait = timeout
-            while wait >= 0:
-                r = engine.test("FVIM7", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<FVIM1>", headers_yaml,
-                                None, None, r_header_yaml, "yaml")
-                if r.status_code == 404:
-                    break
-                elif r.status_code == 200:
-                    wait -= 5
-                    sleep(5)
-            else:
-                raise TestException("Vim created at 'FVIM1' is not delete after {} seconds".format(timeout))
+            engine.wait_until_delete("/admin/v1/vim_accounts/{}".format(vim_id), timeout)
 
 
 class TestVIMSDN(TestFakeVim):
@@ -530,78 +620,59 @@ class TestVIMSDN(TestFakeVim):
         TestFakeVim.__init__(self)
 
     def run(self, engine, test_osm, manual_check, test_params=None):
+        engine.set_test_name("VimSdn")
         engine.get_autorization()
         # Added SDN
-        engine.test("VIMSDN1", "Create SDN", "POST", "/admin/v1/sdns", headers_json, self.sdn, (201, 204),
+        engine.test("Create SDN", "POST", "/admin/v1/sdns", headers_json, self.sdn, (201, 204),
                     {"Location": "/admin/v1/sdns/", "Content-Type": "application/json"}, "json")
+        sdnc_id = engine.last_id
         # sleep(5)
         # Edit SDN
-        engine.test("VIMSDN2", "Edit SDN", "PATCH", "/admin/v1/sdns/<VIMSDN1>", headers_json, {"name": "new_sdn_name"},
+        engine.test("Edit SDN", "PATCH", "/admin/v1/sdns/{}".format(sdnc_id), headers_json, {"name": "new_sdn_name"},
                     204, None, None)
         # sleep(5)
         # VIM with SDN
-        self.vim["config"]["sdn-controller"] = engine.test_ids["VIMSDN1"]
+        self.vim["config"]["sdn-controller"] = sdnc_id
         self.vim["config"]["sdn-port-mapping"] = self.port_mapping
-        engine.test("VIMSDN3", "Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (200, 204, 201),
+        engine.test("Create VIM", "POST", "/admin/v1/vim_accounts", headers_json, self.vim, (200, 204, 201),
                     {"Location": "/admin/v1/vim_accounts/", "Content-Type": "application/json"}, "json"),
 
+        vim_id = engine.last_id
         self.port_mapping[0]["compute_node"] = "compute node XX"
-        engine.test("VIMSDN4", "Edit VIM change port-mapping", "PUT", "/admin/v1/vim_accounts/<VIMSDN3>", headers_json,
+        engine.test("Edit VIM change port-mapping", "PUT", "/admin/v1/vim_accounts/{}".format(vim_id), headers_json,
                     {"config": {"sdn-port-mapping": self.port_mapping}}, 204, None, None)
-        engine.test("VIMSDN5", "Edit VIM remove port-mapping", "PUT", "/admin/v1/vim_accounts/<VIMSDN3>", headers_json,
+        engine.test("Edit VIM remove port-mapping", "PUT", "/admin/v1/vim_accounts/{}".format(vim_id), headers_json,
                     {"config": {"sdn-port-mapping": None}}, 204, None, None)
 
         if not test_osm:
             # delete with FORCE
-            engine.test("VIMSDN6", "Delete VIM remove port-mapping", "DELETE",
-                        "/admin/v1/vim_accounts/<VIMSDN3>?FORCE=True", headers_json, None, 202, None, 0)
-            engine.test("VIMSDN7", "Delete SDNC", "DELETE", "/admin/v1/sdns/<VIMSDN1>?FORCE=True", headers_json, None,
+            engine.test("Delete VIM remove port-mapping", "DELETE",
+                        "/admin/v1/vim_accounts/{}?FORCE=True".format(vim_id), headers_json, None, 202, None, 0)
+            engine.test("Delete SDNC", "DELETE", "/admin/v1/sdns/{}?FORCE=True".format(sdnc_id), headers_json, None,
                         202, None, 0)
 
-            engine.test("VIMSDN8", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<VIMSDN3>", headers_yaml,
+            engine.test("Check VIM is deleted", "GET", "/admin/v1/vim_accounts/{}".format(vim_id), headers_yaml,
                         None, 404, r_header_yaml, "yaml")
-            engine.test("VIMSDN9", "Check SDN is deleted", "GET", "/admin/v1/sdns/<VIMSDN1>", headers_yaml, None,
+            engine.test("Check SDN is deleted", "GET", "/admin/v1/sdns/{}".format(sdnc_id), headers_yaml, None,
                         404, r_header_yaml, "yaml")
         else:
             # delete and wait until is really deleted
-            engine.test("VIMSDN6", "Delete VIM remove port-mapping", "DELETE", "/admin/v1/vim_accounts/<VIMSDN3>",
+            engine.test("Delete VIM remove port-mapping", "DELETE", "/admin/v1/vim_accounts/{}".format(vim_id),
                         headers_json, None, (202, 201, 204), None, 0)
-            engine.test("VIMSDN7", "Delete SDN", "DELETE", "/admin/v1/sdns/<VIMSDN1>", headers_json, None,
+            engine.test("Delete SDN", "DELETE", "/admin/v1/sdns/{}".format(sdnc_id), headers_json, None,
                         (202, 201, 204), None, 0)
-            wait = timeout
-            while wait >= 0:
-                r = engine.test("VIMSDN8", "Check VIM is deleted", "GET", "/admin/v1/vim_accounts/<VIMSDN3>",
-                                headers_yaml, None, None, r_header_yaml, "yaml")
-                if r.status_code == 404:
-                    break
-                elif r.status_code == 200:
-                    wait -= 5
-                    sleep(5)
-            else:
-                raise TestException("Vim created at 'VIMSDN3' is not delete after {} seconds".format(timeout))
-            while wait >= 0:
-                r = engine.test("VIMSDN9", "Check SDNC is deleted", "GET", "/admin/v1/sdns/<VIMSDN1>",
-                                headers_yaml, None, None, r_header_yaml, "yaml")
-                if r.status_code == 404:
-                    break
-                elif r.status_code == 200:
-                    wait -= 5
-                    sleep(5)
-            else:
-                raise TestException("SDNC created at 'VIMSDN1' is not delete after {} seconds".format(timeout))
+            engine.wait_until_delete("/admin/v1/vim_accounts/{}".format(vim_id), timeout)
+            engine.wait_until_delete("/admin/v1/sdns/{}".format(sdnc_id), timeout)
 
 
 class TestDeploy:
     description = "Base class for downloading descriptors from ETSI, onboard and deploy in real VIM"
 
     def __init__(self):
-        self.step = 0
+        self.test_name = "DEPLOY"
         self.nsd_id = None
         self.vim_id = None
-        self.nsd_test = None
-        self.ns_test = None
         self.ns_id = None
-        self.vnfds_test = []
         self.vnfds_id = []
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
@@ -613,8 +684,6 @@ class TestDeploy:
         self.cmds = {}
         self.keys = {}
         self.timeout = 120
-        self.passed_tests = 0
-        self.total_tests = 0
         self.qforce = ""
 
     def create_descriptors(self, engine):
@@ -639,39 +708,29 @@ class TestDeploy:
                 headers = headers_yaml
             else:
                 headers = headers_zip_yaml
-            if self.step % 2 == 0:
+            if randint(0, 1) == 0:
                 # vnfd CREATE AND UPLOAD in one step:
-                test_name = "DEPLOY{}".format(self.step)
-                engine.test(test_name, "Onboard VNFD in one step", "POST",
+                engine.test("Onboard VNFD in one step", "POST",
                             "/vnfpkgm/v1/vnf_packages_content" + self.qforce, headers, "@b" + vnfd_filename_path, 201,
                             {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"},
                             "yaml")
-                self.vnfds_test.append(test_name)
-                self.vnfds_id.append(engine.test_ids["last_id"])
-                self.step += 1
+                self.vnfds_id.append(engine.last_id)
             else:
                 # vnfd CREATE AND UPLOAD ZIP
-                test_name = "DEPLOY{}".format(self.step)
-                engine.test(test_name, "Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages",
+                engine.test("Onboard VNFD step 1", "POST", "/vnfpkgm/v1/vnf_packages",
                             headers_json, None, 201,
                             {"Location": "/vnfpkgm/v1/vnf_packages/", "Content-Type": "application/json"}, "json")
-                self.vnfds_test.append(test_name)
-                self.vnfds_id.append(engine.test_ids["last_id"])
-                self.step += 1
-                # location = r.headers["Location"]
-                # vnfd_id = location[location.rfind("/")+1:]
-                engine.test("DEPLOY{}".format(self.step), "Onboard VNFD step 2 as ZIP", "PUT",
+                self.vnfds_id.append(engine.last_id)
+                engine.test("Onboard VNFD step 2 as ZIP", "PUT",
                             "/vnfpkgm/v1/vnf_packages/<>/package_content" + self.qforce,
                             headers, "@b" + vnfd_filename_path, 204, None, 0)
-                self.step += 2
 
             if self.descriptor_edit:
                 if "vnfd{}".format(vnfd_index) in self.descriptor_edit:
                     # Modify VNFD
-                    engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
+                    engine.test("Edit VNFD ", "PATCH",
                                 "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfds_id[-1]),
                                 headers_yaml, self.descriptor_edit["vnfd{}".format(vnfd_index)], 204, None, None)
-                    self.step += 1
 
         if "/" in self.nsd_filename:
             nsd_filename_path = self.nsd_filename
@@ -691,179 +750,135 @@ class TestDeploy:
         else:
             headers = headers_zip_yaml
 
-        self.nsd_test = "DEPLOY" + str(self.step)
-        if self.step % 2 == 0:
+        if randint(0, 1) == 0:
             # nsd CREATE AND UPLOAD in one step:
-            engine.test("DEPLOY{}".format(self.step), "Onboard NSD in one step", "POST",
+            engine.test("Onboard NSD in one step", "POST",
                         "/nsd/v1/ns_descriptors_content" + self.qforce, headers, "@b" + nsd_filename_path, 201,
                         {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, yaml)
-            self.step += 1
-            self.nsd_id = engine.test_ids["last_id"]
+            self.nsd_id = engine.last_id
         else:
             # nsd CREATE AND UPLOAD ZIP
-            engine.test("DEPLOY{}".format(self.step), "Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors",
+            engine.test("Onboard NSD step 1", "POST", "/nsd/v1/ns_descriptors",
                         headers_json, None, 201,
                         {"Location": "/nsd/v1/ns_descriptors/", "Content-Type": "application/json"}, "json")
-            self.step += 1
-            self.nsd_id = engine.test_ids["last_id"]
-            # location = r.headers["Location"]
-            # vnfd_id = location[location.rfind("/")+1:]
-            engine.test("DEPLOY{}".format(self.step), "Onboard NSD step 2 as ZIP", "PUT",
+            self.nsd_id = engine.last_id
+            engine.test("Onboard NSD step 2 as ZIP", "PUT",
                         "/nsd/v1/ns_descriptors/<>/nsd_content" + self.qforce,
                         headers, "@b" + nsd_filename_path, 204, None, 0)
-            self.step += 2
 
         if self.descriptor_edit and "nsd" in self.descriptor_edit:
             # Modify NSD
-            engine.test("DEPLOY{}".format(self.step), "Edit NSD ", "PATCH",
+            engine.test("Edit NSD ", "PATCH",
                         "/nsd/v1/ns_descriptors/{}".format(self.nsd_id),
                         headers_yaml, self.descriptor_edit["nsd"], 204, None, None)
-            self.step += 1
 
     def delete_descriptors(self, engine):
         # delete descriptors
-        engine.test("DEPLOY{}".format(self.step), "Delete NSSD SOL005", "DELETE",
+        engine.test("Delete NSSD SOL005", "DELETE",
                     "/nsd/v1/ns_descriptors/{}".format(self.nsd_id),
                     headers_yaml, None, 204, None, 0)
-        self.step += 1
         for vnfd_id in self.vnfds_id:
-            engine.test("DEPLOY{}".format(self.step), "Delete VNFD SOL005", "DELETE",
+            engine.test("Delete VNFD SOL005", "DELETE",
                         "/vnfpkgm/v1/vnf_packages/{}".format(vnfd_id), headers_yaml, None, 204, None, 0)
-            self.step += 1
 
     def instantiate(self, engine, ns_data):
         ns_data_text = yaml.safe_dump(ns_data, default_flow_style=True, width=256)
         # create NS Two steps
-        r = engine.test("DEPLOY{}".format(self.step), "Create NS step 1", "POST", "/nslcm/v1/ns_instances",
+        r = engine.test("Create NS step 1", "POST", "/nslcm/v1/ns_instances",
                         headers_yaml, ns_data_text, 201,
                         {"Location": "nslcm/v1/ns_instances/", "Content-Type": "application/yaml"}, "yaml")
-        self.ns_test = "DEPLOY{}".format(self.step)
-        self.ns_id = engine.test_ids["last_id"]
-        self.step += 1
-        r = engine.test("DEPLOY{}".format(self.step), "Instantiate NS step 2", "POST",
-                        "/nslcm/v1/ns_instances/<{}>/instantiate".format(self.ns_test), headers_yaml, ns_data_text,
-                        201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-        nslcmop_test = "DEPLOY{}".format(self.step)
-        self.step += 1
+        if not r:
+            return
+        self.ns_id = engine.last_id
+        engine.test("Instantiate NS step 2", "POST",
+                    "/nslcm/v1/ns_instances/{}/instantiate".format(self.ns_id), headers_yaml, ns_data_text,
+                    201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+        nslcmop_id = engine.last_id
 
         if test_osm:
             # Wait until status is Ok
-            wait = timeout_configure if self.uses_configuration else timeout_deploy
-            while wait >= 0:
-                r = engine.test("DEPLOY{}".format(self.step), "Wait until NS is deployed and configured", "GET",
-                                "/nslcm/v1/ns_lcm_op_occs/<{}>".format(nslcmop_test), headers_json, None,
-                                200, r_header_json, "json")
-                nslcmop = r.json()
-                if "COMPLETED" in nslcmop["operationState"]:
-                    break
-                elif "FAILED" in nslcmop["operationState"]:
-                    raise TestException("NS instantiate has failed: {}".format(nslcmop["detailed-status"]))
-                wait -= 5
-                sleep(5)
-            else:
-                raise TestException("NS instantiate is not done after {} seconds".format(timeout_deploy))
-            self.step += 1
-
-    def _wait_nslcmop_ready(self, engine, nslcmop_test, timeout_deploy, expected_fail=False):
-        wait = timeout
-        while wait >= 0:
-            r = engine.test("DEPLOY{}".format(self.step), "Wait to ns lcm operation complete", "GET",
-                            "/nslcm/v1/ns_lcm_op_occs/<{}>".format(nslcmop_test), headers_json, None,
-                            200, r_header_json, "json")
-            nslcmop = r.json()
-            if "COMPLETED" in nslcmop["operationState"]:
-                if expected_fail:
-                    raise TestException("NS terminate has success, expecting failing: {}".format(
-                        nslcmop["detailed-status"]))
-                break
-            elif "FAILED" in nslcmop["operationState"]:
-                if not expected_fail:
-                    raise TestException("NS terminate has failed: {}".format(nslcmop["detailed-status"]))
-                break
-            wait -= 5
-            sleep(5)
-        else:
-            raise TestException("NS instantiate is not terminate after {} seconds".format(timeout))
+            timeout = timeout_configure if self.uses_configuration else timeout_deploy
+            engine.wait_operation_ready("ns", nslcmop_id, timeout)
 
     def terminate(self, engine):
         # remove deployment
         if test_osm:
-            r = engine.test("DEPLOY{}".format(self.step), "Terminate NS", "POST",
-                            "/nslcm/v1/ns_instances/<{}>/terminate".format(self.ns_test), headers_yaml, None,
-                            201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-            nslcmop2_test = "DEPLOY{}".format(self.step)
-            self.step += 1
+            engine.test("Terminate NS", "POST", "/nslcm/v1/ns_instances/{}/terminate".format(self.ns_id), headers_yaml,
+                        None, 201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+            nslcmop2_id = engine.last_id
             # Wait until status is Ok
-            self._wait_nslcmop_ready(engine, nslcmop2_test, timeout_deploy)
+            engine.wait_operation_ready("ns", nslcmop2_id, timeout_deploy)
 
-            r = engine.test("DEPLOY{}".format(self.step), "Delete NS", "DELETE",
-                            "/nslcm/v1/ns_instances/<{}>".format(self.ns_test), headers_yaml, None,
-                            204, None, 0)
-            self.step += 1
+            engine.test("Delete NS", "DELETE", "/nslcm/v1/ns_instances/{}".format(self.ns_id), headers_yaml, None,
+                        204, None, 0)
         else:
-            r = engine.test("DEPLOY{}".format(self.step), "Delete NS with FORCE", "DELETE",
-                            "/nslcm/v1/ns_instances/<{}>?FORCE=True".format(self.ns_test), headers_yaml, None,
-                            204, None, 0)
-            self.step += 1
+            engine.test("Delete NS with FORCE", "DELETE", "/nslcm/v1/ns_instances/{}?FORCE=True".format(self.ns_id),
+                        headers_yaml, None, 204, None, 0)
 
         # check all it is deleted
-        r = engine.test("DEPLOY{}".format(self.step), "Check NS is deleted", "GET",
-                        "/nslcm/v1/ns_instances/<{}>".format(self.ns_test), headers_yaml, None,
-                        404, None, "yaml")
-        self.step += 1
-        r = engine.test("DEPLOY{}".format(self.step), "Check NSLCMOPs are deleted", "GET",
-                        "/nslcm/v1/ns_lcm_op_occs?nsInstanceId=<{}>".format(self.ns_test), headers_json, None,
+        engine.test("Check NS is deleted", "GET", "/nslcm/v1/ns_instances/{}".format(self.ns_id), headers_yaml, None,
+                    404, None, "yaml")
+        r = engine.test("Check NSLCMOPs are deleted", "GET",
+                        "/nslcm/v1/ns_lcm_op_occs?nsInstanceId={}".format(self.ns_id), headers_json, None,
                         200, None, "json")
+        if not r:
+            return
         nslcmops = r.json()
         if not isinstance(nslcmops, list) or nslcmops:
-            raise TestException("NS {} deleted but with ns_lcm_op_occ active: {}".format(self.ns_test, nslcmops))
+            raise TestException("NS {} deleted but with ns_lcm_op_occ active: {}".format(self.ns_id, nslcmops))
 
     def test_ns(self, engine, test_osm, commands=None, users=None, passwds=None, keys=None, timeout=0):
 
-        n = 0
-        r = engine.test("TEST_NS{}".format(n), "GET VNFR_IDs", "GET",
+        r = engine.test("GET VNFR IDs", "GET",
                         "/nslcm/v1/ns_instances/{}".format(self.ns_id), headers_json, None,
                         200, r_header_json, "json")
-        n += 1
+        if not r:
+            return
         ns_data = r.json()
 
         vnfr_list = ns_data['constituent-vnfr-ref']
         time = 0
 
         for vnfr_id in vnfr_list:
-            self.total_tests += 1
-            r = engine.test("TEST_NS{}".format(n), "GET IP_ADDRESS OF VNFR", "GET",
+            r = engine.test("Get VNFR to get IP_ADDRESS", "GET",
                             "/nslcm/v1/vnfrs/{}".format(vnfr_id), headers_json, None,
                             200, r_header_json, "json")
-            n += 1
+            if not r:
+                continue
             vnfr_data = r.json()
 
+            vnf_index = str(vnfr_data["member-vnf-index-ref"])
+            if not commands.get(vnf_index):
+                continue
             if vnfr_data.get("ip-address"):
-                name = "TEST_NS{}".format(n)
-                description = "Run tests in VNFR with IP {}".format(vnfr_data['ip-address'])
-                n += 1
-                test_description = "Test {} {}".format(name, description)
+                description = "Exec command='{}' at VNFR={} IP={}".format(commands.get(vnf_index)[0], vnf_index,
+                                                                          vnfr_data['ip-address'])
+                engine.step += 1
+                test_description = "{}{} {}".format(engine.test_name, engine.step, description)
                 logger.warning(test_description)
-                vnf_index = str(vnfr_data["member-vnf-index-ref"])
                 while timeout >= time:
                     result, message = self.do_checks([vnfr_data["ip-address"]],
                                                      vnf_index=vnfr_data["member-vnf-index-ref"],
                                                      commands=commands.get(vnf_index), user=users.get(vnf_index),
                                                      passwd=passwds.get(vnf_index), key=keys.get(vnf_index))
                     if result == 1:
-                        logger.warning(message)
+                        engine.passed_tests += 1
+                        logger.debug(message)
                         break
                     elif result == 0:
                         time += 20
                         sleep(20)
                     elif result == -1:
-                        logger.critical(message)
+                        engine.failed_tests += 1
+                        logger.error(message)
                         break
                 else:
                     time -= 20
-                    logger.critical(message)
+                    engine.failed_tests += 1
+                    logger.error(message)
             else:
-                logger.critical("VNFR {} has not mgmt address. Check failed".format(vnfr_id))
+                engine.failed_tests += 1
+                logger.error("VNFR {} has not mgmt address. Check failed".format(vnfr_id))
 
     def do_checks(self, ip, vnf_index, commands=[], user=None, passwd=None, key=None):
         try:
@@ -874,6 +889,7 @@ class TestDeploy:
         except ImportError as e:
             logger.critical("Package <pssh> or/and <urllib3> is not installed. Please add them with 'pip3 install "
                             "parallel-ssh urllib3': {}".format(e))
+            return -1, "install needed packages 'pip3 install parallel-ssh urllib3'"
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         try:
             p_host = os.environ.get("PROXY_HOST")
@@ -891,10 +907,9 @@ class TestDeploy:
                 output = client.run_command(cmd)
                 client.join(output)
                 if output[ip[0]].exit_code:
-                    return -1, "    VNFR {} could not be checked: {}".format(ip[0], output[ip[0]].stderr)
+                    return -1, "    VNFR {} command '{}' returns error: {}".format(ip[0], cmd, output[ip[0]].stderr)
                 else:
-                    self.passed_tests += 1
-                    return 1, "    Test successful"
+                    return 1, "     VNFR {} command '{}' successful".format(ip[0], cmd)
         except (ssh2Exception.ChannelFailure, ssh2Exception.SocketDisconnectError, ssh2Exception.SocketTimeout,
                 ssh2Exception.SocketRecvError) as e:
             return 0, "Timeout accessing the VNFR {}: {}".format(ip[0], str(e))
@@ -905,6 +920,7 @@ class TestDeploy:
         pass
 
     def run(self, engine, test_osm, manual_check, test_params=None):
+        engine.set_test_name(self.test_name)
         engine.get_autorization()
         nsname = os.environ.get("OSMNBITEST_NS_NAME", "OSMNBITEST")
         if test_params:
@@ -929,17 +945,11 @@ class TestDeploy:
 
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
-        elif test_osm:
+        if test_osm and self.cmds:
             self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
         self.aditional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
         self.delete_descriptors(engine)
-        self.print_results()
-
-    def print_results(self):
-        print("\n\n\n--------------------------------------------")
-        print("TEST RESULTS:\n PASSED TESTS: {} - TOTAL TESTS: {}".format(self.total_tests, self.passed_tests))
-        print("--------------------------------------------")
 
 
 class TestDeployHackfestCirros(TestDeploy):
@@ -947,6 +957,7 @@ class TestDeployHackfestCirros(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "CIRROS"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
         self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
@@ -959,6 +970,7 @@ class TestDeployHackfest1(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "HACKFEST1-"
         self.vnfd_filenames = ("hackfest_1_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_1_nsd.tar.gz"
         # self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
@@ -971,27 +983,28 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "CIRROS-SCALE"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
 
     def create_descriptors(self, engine):
         super().create_descriptors(engine)
         # Modify VNFD to add scaling and count=2
-        payload = """
-            vdu: 
-                "$id: 'cirros_vnfd-VM'":
-                    count: 2
-            scaling-group-descriptor:
-                -   name: "scale_cirros"
-                    max-instance-count: 2
-                    vdu:
-                    -   vdu-id-ref: cirros_vnfd-VM
-                        count: 2
-        """
-        engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
-                    "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfds_id[0]),
-                    headers_yaml, payload, 204, None, None)
-        self.step += 1
+        self.descriptor_edit = {
+            "vnfd0": {
+                "vdu": {
+                    "$id: 'cirros_vnfd-VM'": {"count": 2}
+                },
+                "scaling-group-descriptor": [{
+                    "name": "scale_cirros",
+                    "max-instance-count": 2,
+                    "vdu": [{
+                        "vdu-id-ref": "cirros_vnfd-VM",
+                        "count": 2
+                    }]
+                }]
+            }
+        }
 
     def aditional_operations(self, engine, test_osm, manual_check):
         if not test_osm:
@@ -1000,11 +1013,11 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
         payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
                   '{scaling-group-descriptor: scale_cirros, member-vnf-index: "1"}}}'
         for i in range(0, 2):
-            engine.test("DEPLOY{}".format(self.step), "Execute scale action over NS", "POST",
-                        "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+            engine.test("Execute scale action over NS", "POST",
+                        "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
                         201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-            nslcmop2_scale_out = "DEPLOY{}".format(self.step)
-            self._wait_nslcmop_ready(engine, nslcmop2_scale_out, timeout_deploy)
+            nslcmop2_scale_out = engine.last_id
+            engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
             if manual_check:
                 input('NS scale out done. Check that two more vdus are there')
             # TODO check automatic
@@ -1013,21 +1026,21 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
         payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_IN, scaleByStepData: ' \
                   '{scaling-group-descriptor: scale_cirros, member-vnf-index: "1"}}}'
         for i in range(0, 2):
-            engine.test("DEPLOY{}".format(self.step), "Execute scale IN action over NS", "POST",
-                        "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+            engine.test("Execute scale IN action over NS", "POST",
+                        "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
                         201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-            nslcmop2_scale_in = "DEPLOY{}".format(self.step)
-            self._wait_nslcmop_ready(engine, nslcmop2_scale_in, timeout_deploy)
+            nslcmop2_scale_in = engine.last_id
+            engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
             if manual_check:
                 input('NS scale in done. Check that two less vdus are there')
             # TODO check automatic
 
         # perform scale in that must fail as reached limit
-        engine.test("DEPLOY{}".format(self.step), "Execute scale IN out of limit action over NS", "POST",
-                    "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+        engine.test("Execute scale IN out of limit action over NS", "POST",
+                    "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
                     201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-        nslcmop2_scale_in = "DEPLOY{}".format(self.step)
-        self._wait_nslcmop_ready(engine, nslcmop2_scale_in, timeout_deploy, expected_fail=True)
+        nslcmop2_scale_in = engine.last_id
+        engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy, expected_fail=True)
 
 
 class TestDeployIpMac(TestDeploy):
@@ -1035,6 +1048,7 @@ class TestDeployIpMac(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "SetIpMac"
         self.vnfd_filenames = ("vnfd_2vdu_set_ip_mac2.yaml", "vnfd_2vdu_set_ip_mac.yaml")
         self.nsd_filename = "scenario_2vdu_set_ip_mac.yaml"
         self.descriptor_url = \
@@ -1109,6 +1123,7 @@ class TestDeployHackfest4(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "HACKFEST4-"
         self.vnfd_filenames = ("hackfest_4_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_4_nsd.tar.gz"
         self.uses_configuration = True
@@ -1119,41 +1134,48 @@ class TestDeployHackfest4(TestDeploy):
     def create_descriptors(self, engine):
         super().create_descriptors(engine)
         # Modify VNFD to add scaling
-        payload = """
-            scaling-group-descriptor:
-                -   name: "scale_dataVM"
-                    max-instance-count: 10
-                    scaling-policy:
-                    -   name: "auto_cpu_util_above_threshold"
-                        scaling-type: "automatic"
-                        threshold-time: 0
-                        cooldown-time: 60
-                        scaling-criteria:
-                        -   name: "cpu_util_above_threshold"
-                            scale-in-threshold: 15
-                            scale-in-relational-operation: "LE"
-                            scale-out-threshold: 60
-                            scale-out-relational-operation: "GE"
-                            vnf-monitoring-param-ref: "all_aaa_cpu_util"
-                    vdu:
-                    -   vdu-id-ref: dataVM
-                        count: 1
-                    scaling-config-action:
-                    -   trigger: post-scale-out
-                        vnf-config-primitive-name-ref: touch
-                    -   trigger: pre-scale-in
-                        vnf-config-primitive-name-ref: touch
-            vnf-configuration:
-                config-primitive:
-                -   name: touch
-                    parameter:
-                    -   name: filename
-                        data-type: STRING
-                        default-value: '/home/ubuntu/touched'
-        """
-        engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
-                    "/vnfpkgm/v1/vnf_packages/<{}>".format(self.vnfds_test[0]), headers_yaml, payload, 204, None, None)
-        self.step += 1
+        self.descriptor_edit = {
+            "vnfd0": {
+                'vnf-configuration': {
+                    'config-primitive': [{
+                        'name': 'touch',
+                        'parameter': [{
+                            'name': 'filename',
+                            'data-type': 'STRING',
+                            'default-value': '/home/ubuntu/touched'
+                        }]
+                    }]
+                },
+                'scaling-group-descriptor': [{
+                    'name': 'scale_dataVM',
+                    'scaling-policy': [{
+                        'threshold-time': 0,
+                        'name': 'auto_cpu_util_above_threshold',
+                        'scaling-type': 'automatic',
+                        'scaling-criteria': [{
+                            'name': 'cpu_util_above_threshold',
+                            'vnf-monitoring-param-ref': 'all_aaa_cpu_util',
+                            'scale-out-relational-operation': 'GE',
+                            'scale-in-threshold': 15,
+                            'scale-out-threshold': 60,
+                            'scale-in-relational-operation': 'LE'
+                        }],
+                        'cooldown-time': 60
+                    }],
+                    'max-instance-count': 10,
+                    'scaling-config-action': [
+                        {'vnf-config-primitive-name-ref': 'touch',
+                         'trigger': 'post-scale-out'},
+                        {'vnf-config-primitive-name-ref': 'touch',
+                         'trigger': 'pre-scale-in'}
+                    ],
+                    'vdu': [{
+                        'vdu-id-ref': 'dataVM',
+                        'count': 1
+                    }]
+                }]
+            }
+        }
 
 
 class TestDeployHackfest3Charmed(TestDeploy):
@@ -1162,71 +1184,63 @@ class TestDeployHackfest3Charmed(TestDeploy):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "HACKFEST3-"
         self.vnfd_filenames = ("hackfest_3charmed_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_3charmed_nsd.tar.gz"
         self.uses_configuration = True
         self.cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
         self.uss = {'1': "ubuntu", '2': "ubuntu"}
         self.pss = {'1': "osm4u", '2': "osm4u"}
-
-    # def create_descriptors(self, engine):
-    #     super().create_descriptors(engine)
-    #     # Modify VNFD to add scaling
-    #     payload = """
-    #         scaling-group-descriptor:
-    #             -   name: "scale_dataVM"
-    #                 max-instance-count: 10
-    #                 scaling-policy:
-    #                 -   name: "auto_cpu_util_above_threshold"
-    #                     scaling-type: "automatic"
-    #                     threshold-time: 0
-    #                     cooldown-time: 60
-    #                     scaling-criteria:
-    #                     -   name: "cpu_util_above_threshold"
-    #                         scale-in-threshold: 15
-    #                         scale-in-relational-operation: "LE"
-    #                         scale-out-threshold: 60
-    #                         scale-out-relational-operation: "GE"
-    #                         vnf-monitoring-param-ref: "all_aaa_cpu_util"
-    #                 vdu:
-    #                 -   vdu-id-ref: dataVM
-    #                     count: 1
-    #                 scaling-config-action:
-    #                 -   trigger: post-scale-out
-    #                     vnf-config-primitive-name-ref: touch
-    #                 -   trigger: pre-scale-in
-    #                     vnf-config-primitive-name-ref: touch
-    #         vnf-configuration:
-    #             config-primitive:
-    #             -   name: touch
-    #                 parameter:
-    #                 -   name: filename
-    #                     data-type: STRING
-    #                     default-value: '/home/ubuntu/touched'
-    #     """
-    #     engine.test("DEPLOY{}".format(self.step), "Edit VNFD ", "PATCH",
-    #                 "/vnfpkgm/v1/vnf_packages/<{}>".format(self.vnfds_test[0]),
-    #                 headers_yaml, payload, 200,
-    #                 r_header_yaml, yaml)
-    #     self.vnfds_test.append("DEPLOY" + str(self.step))
-    #     self.step += 1
+        # self.descriptor_edit = {
+        #     "vnfd0": yaml.load("""
+        #         scaling-group-descriptor:
+        #             -   name: "scale_dataVM"
+        #                 max-instance-count: 10
+        #                 scaling-policy:
+        #                 -   name: "auto_cpu_util_above_threshold"
+        #                     scaling-type: "automatic"
+        #                     threshold-time: 0
+        #                     cooldown-time: 60
+        #                     scaling-criteria:
+        #                     -   name: "cpu_util_above_threshold"
+        #                         scale-in-threshold: 15
+        #                         scale-in-relational-operation: "LE"
+        #                         scale-out-threshold: 60
+        #                         scale-out-relational-operation: "GE"
+        #                         vnf-monitoring-param-ref: "all_aaa_cpu_util"
+        #                 vdu:
+        #                 -   vdu-id-ref: dataVM
+        #                     count: 1
+        #                 scaling-config-action:
+        #                 -   trigger: post-scale-out
+        #                     vnf-config-primitive-name-ref: touch
+        #                 -   trigger: pre-scale-in
+        #                     vnf-config-primitive-name-ref: touch
+        #         vnf-configuration:
+        #             config-primitive:
+        #             -   name: touch
+        #                 parameter:
+        #                 -   name: filename
+        #                     data-type: STRING
+        #                     default-value: '/home/ubuntu/touched'
+        #         """)
+        #     }
 
     def aditional_operations(self, engine, test_osm, manual_check):
         if not test_osm:
             return
         # 1 perform action
         payload = '{member_vnf_index: "2", primitive: touch, primitive_params: { filename: /home/ubuntu/OSMTESTNBI }}'
-        engine.test("DEPLOY{}".format(self.step), "Executer service primitive over NS", "POST",
-                    "/nslcm/v1/ns_instances/<{}>/action".format(self.ns_test), headers_yaml, payload,
+        engine.test("Exec service primitive over NS", "POST",
+                    "/nslcm/v1/ns_instances/{}/action".format(self.ns_id), headers_yaml, payload,
                     201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-        nslcmop2_action = "DEPLOY{}".format(self.step)
-        self.step += 1
+        nslcmop2_action = engine.last_id
         # Wait until status is Ok
-        self._wait_nslcmop_ready(engine, nslcmop2_action, timeout_deploy)
+        engine.wait_operation_ready("ns", nslcmop2_action, timeout_deploy)
         if manual_check:
             input('NS service primitive has been executed. Check that file /home/ubuntu/OSMTESTNBI is present at '
                   'TODO_PUT_IP')
-        elif test_osm:
+        if test_osm:
             cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/OSMTESTNBI', ]}
             uss = {'1': "ubuntu", '2': "ubuntu"}
             pss = {'1': "osm4u", '2': "osm4u"}
@@ -1235,11 +1249,11 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # # 2 perform scale out
         # payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
         #           '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
-        # engine.test("DEPLOY{}".format(self.step), "Execute scale action over NS", "POST",
-        #             "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+        # engine.test("Execute scale action over NS", "POST",
+        #             "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
         #             201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-        # nslcmop2_scale_out = "DEPLOY{}".format(self.step)
-        # self._wait_nslcmop_ready(engine, nslcmop2_scale_out, timeout_deploy)
+        # nslcmop2_scale_out = engine.last_id
+        # engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
         # if manual_check:
         #     input('NS scale out done. Check that file /home/ubuntu/touched is present and new VM is created')
         # # TODO check automatic
@@ -1247,14 +1261,135 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # # 2 perform scale in
         # payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_IN, scaleByStepData: ' \
         #           '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
-        # engine.test("DEPLOY{}".format(self.step), "Execute scale action over NS", "POST",
-        #             "/nslcm/v1/ns_instances/<{}>/scale".format(self.ns_test), headers_yaml, payload,
+        # engine.test("Execute scale action over NS", "POST",
+        #             "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
         #             201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
-        # nslcmop2_scale_in = "DEPLOY{}".format(self.step)
-        # self._wait_nslcmop_ready(engine, nslcmop2_scale_in, timeout_deploy)
+        # nslcmop2_scale_in = engine.last_id
+        # engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
         # if manual_check:
         #     input('NS scale in done. Check that file /home/ubuntu/touched is updated and new VM is deleted')
         # # TODO check automatic
+
+
+class TestDeploySimpleCharm(TestDeploy):
+    description = "Deploy hackfest-4 hackfest_simplecharm example"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST-SIMPLE"
+        self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-4.0-four/4th-hackfest/packages/"
+        self.vnfd_filenames = ("hackfest_simplecharm_vnf.tar.gz",)
+        self.nsd_filename = "hackfest_simplecharm_ns.tar.gz"
+        self.uses_configuration = True
+        self.cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
+        self.uss = {'1': "ubuntu", '2': "ubuntu"}
+        self.pss = {'1': "osm4u", '2': "osm4u"}
+
+
+class TestDeploySimpleCharm2(TestDeploySimpleCharm):
+    description = "Deploy hackfest-4 hackfest_simplecharm example changing naming to contain dots on ids and " \
+                  "vnf-member-index"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST-SIMPLE2-"
+        self.qforce = "?FORCE=True"
+        self.descriptor_edit = {
+            "vnfd0": {
+                "id": "hackfest.simplecharm.vnf"
+            },
+
+            "nsd": {
+                "id": "hackfest.simplecharm.ns",
+                "constituent-vnfd": {
+                    "$[0]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$1"},
+                    "$[1]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$2"},
+                },
+                "vld": {
+                    "$[0]": {
+                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
+                                                      "$[1]": {"member-vnf-index-ref": "$2",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
+                    },
+                    "$[1]": {
+                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
+                                                      "$[1]": {"member-vnf-index-ref": "$2",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
+                    },
+                }
+            }
+        }
+
+
+class TestDeployHackfest3Charmed2(TestDeployHackfest3Charmed):
+    description = "Load and deploy Hackfest 3charmed_ns example modified version of descriptors to have dots in " \
+                  "ids and member-vnf-index"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST3bis"
+        self.qforce = "?FORCE=True"
+        self.descriptor_edit = {
+            "vnfd0": {
+                "vdu": {
+                    "$[0]": {
+                        "interface": {"$[0]": {"external-connection-point-ref": "pdu-mgmt"}}
+                    },
+                    "$[1]": None
+                },
+                "vnf-configuration": None,
+                "connection-point": {
+                    "$[0]": {
+                        "id": "pdu-mgmt",
+                        "name": "pdu-mgmt",
+                        "short-name": "pdu-mgmt"
+                    },
+                    "$[1]": None
+                },
+                "mgmt-interface": {"cp": "pdu-mgmt"},
+                "description": "A vnf single vdu to be used as PDU",
+                "id": "vdu-as-pdu",
+                "internal-vld": {
+                    "$[0]": {
+                        "id": "pdu_internal",
+                        "name": "pdu_internal",
+                        "internal-connection-point": {"$[1]": None},
+                        "short-name": "pdu_internal",
+                        "type": "ELAN"
+                    }
+                }
+            },
+
+            # Modify NSD accordingly
+            "nsd": {
+                "constituent-vnfd": {
+                    "$[0]": {"vnfd-id-ref": "vdu-as-pdu"},
+                    "$[1]": None,
+                },
+                "description": "A nsd to deploy the vnf to act as as PDU",
+                "id": "nsd-as-pdu",
+                "name": "nsd-as-pdu",
+                "short-name": "nsd-as-pdu",
+                "vld": {
+                    "$[0]": {
+                        "id": "mgmt_pdu",
+                        "name": "mgmt_pdu",
+                        "short-name": "mgmt_pdu",
+                        "vnfd-connection-point-ref": {
+                            "$[0]": {
+                                "vnfd-connection-point-ref": "pdu-mgmt",
+                                "vnfd-id-ref": "vdu-as-pdu",
+                            },
+                            "$[1]": None
+                        },
+                        "type": "ELAN"
+                    },
+                    "$[1]": None,
+                }
+            }
+        }
 
 
 class TestDeploySingleVdu(TestDeployHackfest3Charmed):
@@ -1262,6 +1397,7 @@ class TestDeploySingleVdu(TestDeployHackfest3Charmed):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "SingleVDU"
         self.qforce = "?FORCE=True"
         self.descriptor_edit = {
             # Modify VNFD to remove one VDU
@@ -1330,6 +1466,7 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
 
     def __init__(self):
         super().__init__()
+        self.test_name = "HNFD"
         self.pduDeploy = TestDeploySingleVdu()
         self.pdu_interface_0 = {}
         self.pdu_interface_1 = {}
@@ -1394,6 +1531,10 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
             "nsd": {
                 "constituent-vnfd": {
                     "$[1]": {"vnfd-id-ref": "hfnd1"}
+                },
+                "vld": {
+                    "$[0]": {"vnfd-connection-point-ref": {"$[1]": {"vnfd-id-ref": "hfnd1"}}},
+                    "$[1]": {"vnfd-connection-point-ref": {"$[1]": {"vnfd-id-ref": "hfnd1"}}}
                 }
             }
         }
@@ -1409,34 +1550,34 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
         self.pdu_descriptor["interfaces"][1]["vim-network-name"] = "{}-{}-{}".format(
             os.environ.get("OSMNBITEST_NS_NAME", "OSMNBITEST"),
             "PDU", self.pdu_descriptor["interfaces"][1]["vim-network-name"])
-        test_name = "DEPLOY{}".format(self.step)
-        engine.test(test_name, "Onboard PDU descriptor", "POST", "/pdu/v1/pdu_descriptors",
+        engine.test("Onboard PDU descriptor", "POST", "/pdu/v1/pdu_descriptors",
                     {"Location": "/pdu/v1/pdu_descriptors/", "Content-Type": "application/yaml"}, self.pdu_descriptor,
                     201, r_header_yaml, "yaml")
-        self.pdu_id = engine.test_ids["last_id"]
-        self.step += 1
+        self.pdu_id = engine.last_id
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         engine.get_autorization()
+        engine.set_test_name(self.test_name)
         nsname = os.environ.get("OSMNBITEST_NS_NAME", "OSMNBITEST")
 
         # create real VIM if not exist
         self.vim_id = engine.get_create_vim(test_osm)
-        # instanciate PDU
+        # instantiate PDU
         self.pduDeploy.create_descriptors(engine)
         self.pduDeploy.instantiate(engine, {"nsDescription": "to be used as PDU", "nsName": nsname + "-PDU",
                                             "nsdId": self.pduDeploy.nsd_id, "vimAccountId": self.vim_id})
         if manual_check:
             input('VNF to be used as PDU has been deployed. Perform manual check and press enter to resume')
-        elif test_osm:
+        if test_osm:
             self.pduDeploy.test_ns(engine, test_osm, self.pduDeploy.cmds, self.pduDeploy.uss, self.pduDeploy.pss,
                                    self.pduDeploy.keys, self.pduDeploy.timeout)
 
         if test_osm:
-            r = engine.test("DEPLOY{}".format(self.step), "GET IP_ADDRESS OF VNFR", "GET",
+            r = engine.test("Get VNFR to obtain IP_ADDRESS", "GET",
                             "/nslcm/v1/vnfrs?nsr-id-ref={}".format(self.pduDeploy.ns_id), headers_json, None,
                             200, r_header_json, "json")
-            self.step += 1
+            if not r:
+                return
             vnfr_data = r.json()
             # print(vnfr_data)
 
@@ -1465,7 +1606,7 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
         self.instantiate(engine, ns_data)
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
-        elif test_osm:
+        if test_osm:
             self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
         self.aditional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
@@ -1473,14 +1614,10 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
         self.delete_descriptors(engine)
         self.pduDeploy.delete_descriptors(engine)
 
-        self.step += 1
-
-        self.print_results()
-
     def delete_descriptors(self, engine):
         super().delete_descriptors(engine)
         # delete pdu
-        engine.test("DEPLOY{}".format(self.step), "Delete PDU SOL005", "DELETE",
+        engine.test("Delete PDU SOL005", "DELETE",
                     "/pdu/v1/pdu_descriptors/{}".format(self.pdu_id),
                     headers_yaml, None, 204, None, 0)
 
@@ -1489,7 +1626,6 @@ class TestDescriptors:
     description = "Test VNFD, NSD, PDU descriptors CRUD and dependencies"
 
     def __init__(self):
-        self.step = 0
         self.vnfd_filename = "hackfest_3charmed_vnfd.tar.gz"
         self.nsd_filename = "hackfest_3charmed_nsd.tar.gz"
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
@@ -1497,6 +1633,7 @@ class TestDescriptors:
         self.nsd_id = None
 
     def run(self, engine, test_osm, manual_check, test_params=None):
+        engine.set_test_name("Descriptors")
         engine.get_autorization()
         temp_dir = os.path.dirname(os.path.abspath(__file__)) + "/temp/"
         if not os.path.exists(temp_dir):
@@ -1517,86 +1654,71 @@ class TestDescriptors:
         nsd_filename_path = temp_dir + self.nsd_filename
 
         # vnfd CREATE AND UPLOAD in one step:
-        test_name = "DESCRIPTOR{}".format(self.step)
-        engine.test(test_name, "Onboard VNFD in one step", "POST",
+        engine.test("Onboard VNFD in one step", "POST",
                     "/vnfpkgm/v1/vnf_packages_content", headers_zip_yaml, "@b" + vnfd_filename_path, 201,
                     {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, "yaml")
-        self.vnfd_id = engine.test_ids["last_id"]
-        self.step += 1
+        self.vnfd_id = engine.last_id
 
         # get vnfd descriptor
-        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD descriptor", "GET",
+        engine.test("Get VNFD descriptor", "GET",
                     "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
-        self.step += 1
 
         # get vnfd file descriptor
-        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD file descriptor", "GET",
+        engine.test("Get VNFD file descriptor", "GET",
                     "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(self.vnfd_id), headers_text, None, 200,
                     r_header_text, "text", temp_dir+"vnfd-yaml")
-        self.step += 1
         # TODO compare files: diff vnfd-yaml hackfest_3charmed_vnfd/hackfest_3charmed_vnfd.yaml
 
         # get vnfd zip file package
-        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD zip package", "GET",
+        engine.test("Get VNFD zip package", "GET",
                     "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id), headers_zip, None, 200,
                     r_header_zip, "zip", temp_dir+"vnfd-zip")
-        self.step += 1
         # TODO compare files: diff vnfd-zip hackfest_3charmed_vnfd.tar.gz
 
         # get vnfd artifact
-        engine.test("DESCRIPTOR" + str(self.step), "Get VNFD artifact package", "GET",
+        engine.test("Get VNFD artifact package", "GET",
                     "/vnfpkgm/v1/vnf_packages/{}/artifacts/icons/osm.png".format(self.vnfd_id), headers_zip, None, 200,
                     r_header_octect, "octet-string", temp_dir+"vnfd-icon")
-        self.step += 1
         # TODO compare files: diff vnfd-icon hackfest_3charmed_vnfd/icons/osm.png
 
         # nsd CREATE AND UPLOAD in one step:
-        test_name = "DESCRIPTOR{}".format(self.step)
-        engine.test(test_name, "Onboard NSD in one step", "POST",
+        engine.test("Onboard NSD in one step", "POST",
                     "/nsd/v1/ns_descriptors_content", headers_zip_yaml, "@b" + nsd_filename_path, 201,
                     {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, "yaml")
-        self.nsd_id = engine.test_ids["last_id"]
-        self.step += 1
+        self.nsd_id = engine.last_id
 
         # get nsd descriptor
-        engine.test("DESCRIPTOR" + str(self.step), "Get NSD descriptor", "GET",
+        engine.test("Get NSD descriptor", "GET",
                     "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
-        self.step += 1
 
         # get nsd file descriptor
-        engine.test("DESCRIPTOR" + str(self.step), "Get NSD file descriptor", "GET",
+        engine.test("Get NSD file descriptor", "GET",
                     "/nsd/v1/ns_descriptors/{}/nsd".format(self.nsd_id), headers_text, None, 200,
                     r_header_text, "text", temp_dir+"nsd-yaml")
-        self.step += 1
         # TODO compare files: diff nsd-yaml hackfest_3charmed_nsd/hackfest_3charmed_nsd.yaml
 
         # get nsd zip file package
-        engine.test("DESCRIPTOR" + str(self.step), "Get NSD zip package", "GET",
+        engine.test("Get NSD zip package", "GET",
                     "/nsd/v1/ns_descriptors/{}/nsd_content".format(self.nsd_id), headers_zip, None, 200,
                     r_header_zip, "zip", temp_dir+"nsd-zip")
-        self.step += 1
         # TODO compare files: diff nsd-zip hackfest_3charmed_nsd.tar.gz
 
         # get nsd artifact
-        engine.test("DESCRIPTOR" + str(self.step), "Get NSD artifact package", "GET",
+        engine.test("Get NSD artifact package", "GET",
                     "/nsd/v1/ns_descriptors/{}/artifacts/icons/osm.png".format(self.nsd_id), headers_zip, None, 200,
                     r_header_octect, "octet-string", temp_dir+"nsd-icon")
-        self.step += 1
         # TODO compare files: diff nsd-icon hackfest_3charmed_nsd/icons/osm.png
 
         # vnfd DELETE
-        test_rest.test("DESCRIPTOR" + str(self.step), "Delete VNFD conflict", "DELETE",
+        test_rest.test("Delete VNFD conflict", "DELETE",
                        "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 409, None, None)
-        self.step += 1
 
-        test_rest.test("DESCRIPTOR" + str(self.step), "Delete VNFD force", "DELETE",
+        test_rest.test("Delete VNFD force", "DELETE",
                        "/vnfpkgm/v1/vnf_packages/{}?FORCE=TRUE".format(self.vnfd_id), headers_yaml, None, 204, None, 0)
-        self.step += 1
 
         # nsd DELETE
-        test_rest.test("DESCRIPTOR" + str(self.step), "Delete NSD", "DELETE",
+        test_rest.test("Delete NSD", "DELETE",
                        "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 204, None, 0)
-        self.step += 1
 
 
 class TestNetSliceTemplates:
@@ -1607,81 +1729,64 @@ class TestNetSliceTemplates:
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         # nst CREATE
+        engine.set_test_name("NST")
         engine.get_autorization()
-        r = engine.test("NST1", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
-                        self.nst_filenames, 
-                        201, {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, 
-                        "yaml")
-        location = r.headers["Location"]
-        nst_id = location[location.rfind("/")+1:]
+        engine.test("Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, self.nst_filenames,
+                    201, {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
+        nst_id = engine.last_id
 
         # nstd SHOW OSM format
-        r = engine.test("NST2", "Show NSTD OSM format", "GET", 
-                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
-                        200, r_header_json, "json")      
+        engine.test("Show NSTD OSM format", "GET", "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None,
+                    200, r_header_json, "json")
 
         # nstd DELETE
-        r = engine.test("NST3", "Delete NSTD", "DELETE", 
-                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
-                        204, None, 0)
+        engine.test("Delete NSTD", "DELETE", "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None,
+                    204, None, 0)
 
 
 class TestNetSliceInstances:
     description = "Upload a NST to OSM"
 
     def __init__(self):
+        self.vim_id = None
         self.nst_filenames = ("@./cirros_slice/cirros_slice.yaml")
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         # nst CREATE
+        engine.set_test_name("NSI")
         engine.get_autorization()
-        r = engine.test("NST1", "Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, 
-                        self.nst_filenames, 201, 
-                        {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
-        location = r.headers["Location"]
-        nst_id = location[location.rfind("/")+1:]
+        engine.test("Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, self.nst_filenames, 201,
+                    {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
+        nst_id = engine.last_id
 
         # nsi CREATE
-        if test_osm:
-            self.vim_id = engine.get_create_vim(test_osm)
-        else:
-            r = engine.test("VIM1", "Get available VIM", "GET", "/admin/v1/vim_accounts",
-                            headers_json, None, None, r_header_json, "json")       
-            r_json = json.loads(r.text)
-            vim = r_json[0]
-            self.vim_id = vim["_id"]
-            
+        self.vim_id = engine.get_create_vim(test_osm)
+
         ns_data = {"nsiDescription": "default description", "nsiName": "my_slice", "nstId": nst_id,
                    "vimAccountId": self.vim_id}
         ns_data_text = yaml.safe_dump(ns_data, default_flow_style=True, width=256)
 
-        r = engine.test("NSI1", "Onboard NSI", "POST", "/nsilcm/v1/netslice_instances_content", headers_yaml, 
-                        ns_data_text, 201, 
-                        {"Location": "/nsilcm/v1/netslice_instances_content", "Content-Type": 
-                         "application/yaml"}, "yaml")
-        location = r.headers["Location"]
-        nsi_id = location[location.rfind("/")+1:]
+        engine.test("Onboard NSI", "POST", "/nsilcm/v1/netslice_instances_content", headers_yaml, ns_data_text, 201,
+                    {"Location": "/nsilcm/v1/netslice_instances_content", "Content-Type": "application/yaml"}, "yaml")
+        nsi_id = engine.last_id
         
         # TODO: Improve the wait with a polling if NSI was deployed
         wait = 120
         sleep(wait)
 
         # Check deployment
-        r = engine.test("NSI2", "Wait until NSI is deployed", "GET", 
-                        "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id), headers_json, None, 
-                        200, r_header_json, "json")                                
+        engine.test("Wait until NSI is deployed", "GET", "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id),
+                    headers_json, None, 200, r_header_json, "json")
  
         # nsi DELETE
-        r = engine.test("NSI3", "Delete NSI", "DELETE", 
-                        "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id), headers_json, None, 
-                        202, r_header_json, "json")
+        engine.test("Delete NSI", "DELETE", "/nsilcm/v1/netslice_instances_content/{}".format(nsi_id), headers_json,
+                    None, 202, r_header_json, "json")
         
         sleep(60)
 
         # nstd DELETE
-        r = engine.test("NST2", "Delete NSTD", "DELETE", 
-                        "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None, 
-                        204, None, 0)
+        engine.test("Delete NSTD", "DELETE", "/nst/v1/netslice_templates/{}".format(nst_id), headers_json, None,
+                    204, None, 0)
 
 
 if __name__ == "__main__":
@@ -1697,13 +1802,14 @@ if __name__ == "__main__":
         opts, args = getopt.getopt(sys.argv[1:], "hvu:p:",
                                    ["url=", "user=", "password=", "help", "version", "verbose", "no-verbose",
                                     "project=", "insecure", "timeout", "timeout-deploy", "timeout-configure",
-                                    "test=", "list", "test-osm", "manual-check", "params="])
+                                    "test=", "list", "test-osm", "manual-check", "params=", 'fail-fast'])
         url = "https://localhost:9999/osm"
         user = password = project = "admin"
         test_osm = False
         manual_check = False
         verbose = 0
         verify = True
+        fail_fast = False
         test_classes = {
             "NonAuthorized": TestNonAuthorized,
             "FakeVIM": TestFakeVim,
@@ -1720,8 +1826,10 @@ if __name__ == "__main__":
             # "Deploy-MultiVIM": TestDeployMultiVIM,
             "DeploySingleVdu": TestDeploySingleVdu,
             "DeployHnfd": TestDeployHnfd,
-            "Upload-Slice-Template": TestNetSliceTemplates,
-            "Deploy-Slice-Instance": TestNetSliceInstances,
+            # "Upload-Slice-Template": TestNetSliceTemplates,
+            # "Deploy-Slice-Instance": TestNetSliceInstances,
+            "TestDeploySimpleCharm": TestDeploySimpleCharm,
+            "TestDeploySimpleCharm2": TestDeploySimpleCharm2,
         }
         test_to_do = []
         test_params = {}
@@ -1754,6 +1862,8 @@ if __name__ == "__main__":
                 password = a
             elif o == "--project":
                 project = a
+            elif o == "--fail-fast":
+                fail_fast = True
             elif o == "--test":
                 # print("asdfadf", o, a, a.split(","))
                 for _test in a.split(","):
@@ -1790,16 +1900,18 @@ if __name__ == "__main__":
         if test_to_do:
             text_index = 0
             for test in test_to_do:
+                if fail_fast and test_rest.failed_tests:
+                    break
                 text_index += 1
                 test_class = test_classes[test]
                 test_class().run(test_rest, test_osm, manual_check, test_params.get(text_index))
         else:
             for test, test_class in test_classes.items():
+                if fail_fast and test_rest.failed_tests:
+                    break
                 test_class().run(test_rest, test_osm, manual_check, test_params.get(0))
-        exit(0)
-
-        # get token
-        print("PASS")
+        test_rest.print_results()
+        exit(1 if test_rest.failed_tests else 0)
 
     except TestException as e:
         logger.error(test + "Test {} Exception: {}".format(test, str(e)))

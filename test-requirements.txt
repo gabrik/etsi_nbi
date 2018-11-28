@@ -13,4 +13,7 @@
 
 flake8<3.0
 mock
+requests
+parallel-ssh
+urllib3
 
