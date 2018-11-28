@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This creates som/NBI docker from from last stable package
+# This creates osm/NBI docker from from last stable package
 
 FROM ubuntu:16.04
 

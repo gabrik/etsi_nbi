@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 Telefonica S.A.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,9 +29,9 @@ RUN apt-get update && apt-get -y install wget git make python python3 python-pip
     DEBIAN_FRONTEND=noninteractive pip2 install -U stdeb
 
 # Uncomment this block to generate automatically a debian package and show info
-# Set the working directory to /app
-WORKDIR /app
-# Copy the current directory contents into the container at /app
-ADD . /app
-CMD /app/devops-stages/stage-build.sh && find -name "*.deb" -exec dpkg -I  {} ";"
+# # Set the working directory to /app
+# WORKDIR /app
+# # Copy the current directory contents into the container at /app
+# ADD . /app
+# CMD /app/devops-stages/stage-build.sh && find -name "*.deb" -exec dpkg -I  {} ";"
 
