@@ -584,7 +584,7 @@ nsi_instantiate = {
         "nsiInstanceId": id_schema,
         "nsiName": name_schema,
         "nsiDescription": {"oneOf": [description_schema, {"type": "null"}]},
-        "nstdId": string_schema,
+        "nstId": string_schema,
         "vimAccountId": id_schema,
         "ssh_keys": {"type": "string"},
         "nsi_id": id_schema,
@@ -594,7 +594,7 @@ nsi_instantiate = {
             "items": ns_instantiate
         },
     },
-    "required": ["nsiName", "nstdId", "vimAccountId"],
+    "required": ["nsiName", "nstId", "vimAccountId"], 
     "additionalProperties": False
 }
 

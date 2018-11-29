@@ -783,8 +783,8 @@ class NsiTopic(BaseTopic):
             step = ""
             # look for nstd
             self.logger.info(str(slice_request))
-            step = "getting nstd id='{}' from database".format(slice_request.get("nstdId"))
-            _filter = {"id": slice_request["nstdId"]}
+            step = "getting nstd id='{}' from database".format(slice_request.get("nstId"))
+            _filter = {"_id": slice_request["nstId"]}
             _filter.update(BaseTopic._get_project_filter(session, write=False, show_all=True))
             nstd = self.db.get_one("nsts", _filter)
             nstd.pop("_admin", None)

@@ -1651,7 +1651,7 @@ class TestNetSliceInstances:
             vim = r_json[0]
             self.vim_id = vim["_id"]
             
-        ns_data = {"nsiDescription": "default description", "nsiName": "my_slice", "nstdId": "cirros_nst",
+        ns_data = {"nsiDescription": "default description", "nsiName": "my_slice", "nstId": nst_id,
                    "vimAccountId": self.vim_id}
         ns_data_text = yaml.safe_dump(ns_data, default_flow_style=True, width=256)
 
