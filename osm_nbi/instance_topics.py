@@ -796,7 +796,11 @@ class NsiTopic(BaseTopic):
             # TODO: Equal as template for now
             nsi_descriptor = {
                 "id": nsi_id,
+                "name": slice_request["nsiName"],
+                "description": slice_request.get("nsiDescription", ""),
+                "datacenter": slice_request["vimAccountId"],
                 "nst-ref": nstd["id"],
+                # "instantiate_params": slice_request,
                 "instantiation-parameters": {
                     "netslice-subnet": []
                 },
