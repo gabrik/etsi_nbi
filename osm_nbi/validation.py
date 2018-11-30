@@ -15,6 +15,7 @@
 
 from jsonschema import validate as js_v, exceptions as js_e
 from http import HTTPStatus
+from copy import deepcopy
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __version__ = "0.1"
@@ -575,6 +576,24 @@ nbi_edit_input_schemas = {
 }
 
 # NETSLICE SCHEMAS
+nsi_slice_instantiate = deepcopy(ns_instantiate)
+nsi_slice_instantiate["title"] = "netslice subnet instantiation params input schema"
+nsi_slice_instantiate["properties"]["id"] = name_schema
+nsi_slice_instantiate["required"].append("id")
+
+nsi_vld_instantiate = {
+    "title": "netslice vld instantiation params input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": string_schema,
+        "vim-network-name": {"OneOf": [string_schema, object_schema]},
+        "ip-profile": object_schema,
+    },
+    "required": ["name"], 
+    "additionalProperties": False
+}
+
 nsi_instantiate = {
     "title": "netslice action instantiate input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
@@ -588,10 +607,15 @@ nsi_instantiate = {
         "vimAccountId": id_schema,
         "ssh_keys": {"type": "string"},
         "nsi_id": id_schema,
-        "ns": {
+        "netslice-subnet": {
             "type": "array",
             "minItems": 1,
-            "items": ns_instantiate
+            "items": nsi_slice_instantiate
+        },
+        "netslice-vld": {
+            "type": "array",
+            "minItems": 1,
+            "items": nsi_vld_instantiate
         },
     },
     "required": ["nsiName", "nstId", "vimAccountId"], 
