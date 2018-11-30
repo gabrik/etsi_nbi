@@ -486,9 +486,9 @@ pdu_edit_schema = {
         "type": nameshort_schema,
         "description": description_schema,
         "shared": bool_schema,
-        "vims": {"oneOff": [array_edition_schema, nameshort_list_schema]},
-        "vim_accounts": {"oneOff": [array_edition_schema, nameshort_list_schema]},
-        "interfaces": {"oneOff": [
+        "vims": {"oneOf": [array_edition_schema, nameshort_list_schema]},
+        "vim_accounts": {"oneOf": [array_edition_schema, nameshort_list_schema]},
+        "interfaces": {"oneOf": [
             array_edition_schema,
             {
                 "type": "array",
@@ -521,7 +521,7 @@ user_edit_schema = {
     "properties": {
         "password": passwd_schema,
         "projects": {
-            "oneOff": [
+            "oneOf": [
                 nameshort_list_schema,
                 array_edition_schema
             ]
