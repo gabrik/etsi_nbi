@@ -782,7 +782,6 @@ class NsiTopic(BaseTopic):
 
             step = ""
             # look for nstd
-            self.logger.info(str(slice_request))
             step = "getting nstd id='{}' from database".format(slice_request.get("nstId"))
             _filter = {"_id": slice_request["nstId"]}
             _filter.update(BaseTopic._get_project_filter(session, write=False, show_all=True))
@@ -792,25 +791,68 @@ class NsiTopic(BaseTopic):
             nsi_id = str(uuid4())
             step = "filling nsi_descriptor with input data"
 
-            # "instantiation-parameters.netslice-subnet": []
-            # TODO: Equal as template for now
+            # Creating the NSIR
             nsi_descriptor = {
                 "id": nsi_id,
                 "name": slice_request["nsiName"],
                 "description": slice_request.get("nsiDescription", ""),
                 "datacenter": slice_request["vimAccountId"],
                 "nst-ref": nstd["id"],
-                # "instantiate_params": slice_request,
-                "instantiation-parameters": {
-                    "netslice-subnet": []
-                },
+                "instantiation_parameters": slice_request,
                 "network-slice-template": nstd,
+                "nsr-ref-list": [],
+                "vlr-list": [],
                 "_id": nsi_id,
             }
 
+            step = "creating nsi at database"
+            self.format_on_new(nsi_descriptor, session["project_id"], make_public=make_public)
+            nsi_descriptor["_admin"]["nsiState"] = "NOT_INSTANTIATED"
+            nsi_descriptor["_admin"]["netslice-subnet"] = None
+            
+            # Creating netslice-vld for the RO.
+            step = "creating netslice-vld at database"
+            instantiation_parameters = slice_request
+
+            # Building the vlds list to be deployed
+            # From netslice descriptors, creating the initial list
+            nsi_vlds = []           
+            if nstd.get("netslice-vld"):
+                # Building VLDs from NST
+                for netslice_vlds in nstd["netslice-vld"]:
+                    nsi_vld = {}
+                    # Adding nst vld name and global vimAccountId for netslice vld creation
+                    nsi_vld["name"] = netslice_vlds["name"]
+                    nsi_vld["vimAccountId"] = slice_request["vimAccountId"]
+                    # Getting template Instantiation parameters from NST
+                    for netslice_vld in netslice_vlds["nss-connection-point-ref"]:
+                        for netslice_subnet in nstd["netslice-subnet"]:
+                            nsi_vld["nsd-ref"] = netslice_subnet["nsd-ref"]
+                            nsi_vld["nsd-connection-point-ref"] = netslice_vld["nsd-connection-point-ref"]
+                            # Obtaining the vimAccountId from template instantiation parameter            
+                            if netslice_subnet.get("instantiation-parameters"):
+                                # Taking the vimAccountId from NST netslice-subnet instantiation parameters
+                                if netslice_subnet["instantiation-parameters"].get("vimAccountId"):
+                                    netsn = netslice_subnet["instantiation-parameters"]["vimAccountId"]
+                                    nsi_vld["vimAccountId"] = netsn
+                            # Obtaining the vimAccountId from user instantiation parameter
+                            if instantiation_parameters.get("netslice-subnet"):
+                                for ins_param in instantiation_parameters["netslice-subnet"]:
+                                    if ins_param.get("id") == netslice_vld["nss-ref"]:
+                                        if ins_param.get("vimAccountId"):
+                                            nsi_vld["vimAccountId"] = ins_param["vimAccountId"]
+                    # Adding vim-network-name defined by the user to vld
+                    if instantiation_parameters.get("netslice-vld"):
+                        for ins_param in instantiation_parameters["netslice-vld"]:
+                            if ins_param["name"] == netslice_vlds["name"] and ins_param.get("vim-network-name"):
+                                    nsi_vld["vim-network-name"] = ins_param.get("vim-network-name")
+                    nsi_vlds.append(nsi_vld)
+
+            nsi_descriptor["_admin"]["netslice-vld"] = nsi_vlds
             # Creating netslice-subnet_record. 
             needed_nsds = {}
             services = []
+
             for member_ns in nstd["netslice-subnet"]:
                 nsd_id = member_ns["nsd-ref"]
                 step = "getting nstd id='{}' constituent-nsd='{}' from database".format(
@@ -830,34 +872,60 @@ class NsiTopic(BaseTopic):
                 step = "filling nsir nsd-id='{}' constituent-nsd='{}' from database".format(
                     member_ns["nsd-ref"], member_ns["id"])
 
-            step = "creating nsi at database"
-            self.format_on_new(nsi_descriptor, session["project_id"], make_public=make_public)
-            nsi_descriptor["_admin"]["nsiState"] = "NOT_INSTANTIATED"          
-
-            ns_params = indata.get("ns")
-            
             # creates Network Services records (NSRs)
             step = "creating nsrs at database using NsrTopic.new()"
+            ns_params = slice_request.get("netslice-subnet")
+
             nsrs_list = []
+            nsi_netslice_subnet = []
             for service in services:
                 indata_ns = {}
                 indata_ns["nsdId"] = service["_id"]
-                indata_ns["nsName"] = service["id"]
-                indata_ns["vimAccountId"] = indata.get("vimAccountId")
+                indata_ns["nsName"] = slice_request.get("nsiName") + "." + service["id"]
+                indata_ns["vimAccountId"] = slice_request.get("vimAccountId")
                 indata_ns["nsDescription"] = service["description"]
                 indata_ns["key-pair-ref"] = None
+
                 # NsrTopic(rollback, session, indata_ns, kwargs, headers, force)
                 # Overwriting ns_params filtering by nsName == netslice-subnet.id
+
                 if ns_params:
                     for ns_param in ns_params:
-                        if ns_param["nsName"] == service["id"]:
-                            indata_ns.update(ns_param)
+                        if ns_param.get("id") == service["id"]:
+                            copy_ns_param = deepcopy(ns_param)
+                            del copy_ns_param["id"]
+                            indata_ns.update(copy_ns_param)
+                # TODO: Improve network selection via networkID
+                if nsi_vlds:
+                    indata_ns_list = []
+                    for nsi_vld in nsi_vlds:
+                        nsd = self.db.get_one("nsds", {"id": nsi_vld["nsd-ref"]})
+                        if nsd["connection-point"]:
+                            for vld_id_ref in nsd["connection-point"]:
+                                name = vld_id_ref["vld-id-ref"]
+                                vnm = nsi_vld.get("vim-network-name")
+                                if type(vnm) is not dict:
+                                    vnm = {slice_request.get("vimAccountId"): vnm}
+                                if vld_id_ref["name"] == nsi_vld["nsd-connection-point-ref"]:
+                                    if list(vnm.values())[0] is None:
+                                        networkName = "default"
+                                    else:
+                                        networkName = str(list(vnm.values())[0])
+                                    # VIMNetworkName = NetSliceName-NetworkName
+                                    vimnetname = str(slice_request["nsiName"]) + "-" + networkName
+                                    indata_ns_list.append({"name": name, "vim-network-name": vimnetname})
+                    indata_ns["vld"] = indata_ns_list
+                            
                 _id_nsr = NsrTopic.new(self, rollback, session, indata_ns, kwargs, headers, force)
                 nsrs_item = {"nsrId": _id_nsr}
                 nsrs_list.append(nsrs_item)
+                nsi_netslice_subnet.append(indata_ns)
+                nsr_ref = {"nsr-ref": _id_nsr}
+                nsi_descriptor["nsr-ref-list"].append(nsr_ref)
 
             # Adding the nsrs list to the nsi
             nsi_descriptor["_admin"]["nsrs-detailed-list"] = nsrs_list
+            nsi_descriptor["_admin"]["netslice-subnet"] = nsi_netslice_subnet
             # Creating the entry in the database
             self.db.create("nsis", nsi_descriptor)
             rollback.append({"topic": "nsis", "_id": nsi_id})
@@ -894,21 +962,21 @@ class NsiLcmOpTopic(BaseTopic):
         nsds = {}
         nstd = nsir["network-slice-template"]
 
-        def check_valid_netslice_subnet_id(nsId):
+        def check_valid_netslice_subnet_id(nstId):
             # TODO change to vnfR (??)
-            for ns in nstd["netslice-subnet"]:
-                if nsId == ns["id"]:
-                    nsd_id = ns["nsd-ref"]
+            for netslice_subnet in nstd["netslice-subnet"]:
+                if nstId == netslice_subnet["id"]:
+                    nsd_id = netslice_subnet["nsd-ref"]
                     if nsd_id not in nsds:
                         nsds[nsd_id] = self.db.get_one("nsds", {"id": nsd_id})
                     return nsds[nsd_id]
             else:
-                raise EngineException("Invalid parameter nsId='{}' is not one of the "
-                                      "nst:netslice-subnet".format(nsId))
+                raise EngineException("Invalid parameter nstId='{}' is not one of the "
+                                      "nst:netslice-subnet".format(nstId))
         if operation == "instantiate":
             # check the existance of netslice-subnet items
-            for in_nst in get_iterable(indata.get("netslice-subnet")):           
-                nstd = check_valid_netslice_subnet_id(in_nst["nsdId"])
+            for in_nst in get_iterable(indata.get("netslice-subnet")):   
+                check_valid_netslice_subnet_id(in_nst["id"])
 
     def _create_nsilcmop(self, session, netsliceInstanceId, operation, params):
         now = time()

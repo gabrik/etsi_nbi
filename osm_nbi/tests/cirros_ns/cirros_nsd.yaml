@@ -30,6 +30,7 @@ nsd-catalog:
             # Multiple constituent VNFDs can be specified
         -   member-vnf-index: 1
             vnfd-id-ref: cirros_vnfd
+            
         scaling-group-descriptor:
         -   name: "scaling_cirros"
             vnfd-member:

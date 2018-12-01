@@ -1725,7 +1725,7 @@ class TestNetSliceTemplates:
     description = "Upload a NST to OSM"
 
     def __init__(self):
-        self.nst_filenames = ("@./cirros_slice/cirros_slice.yaml")
+        self.nst_filenames = ("@./cirros_slice/cirros_slice_vld.yaml")
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         # nst CREATE

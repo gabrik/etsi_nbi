@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+#NST to deploy 2 Network Services without VLD
 nst:
--   id: cirros_nst
-    name: cirros_netslice_template
+-   id: 'cirros_nst'
+    name: cirros_nst
     SNSSAI-identifier:
         slice-service-type: eMBB
     quality-of-service:
@@ -22,22 +24,12 @@ nst:
     -   id: cirros_nsd_1
         is-shared-nss: 'false'
         description: Slice example for osm-5.0
-        nsd-ref: cirros_nsd
+        nsd-ref: 'cirros_2vnf_nsd'
         instantiation-parameters:
-        -   nsName: cirros_nsd
-            nsdId: cirros_nsd
-            vimAccountId: openstack_18
+            vimAccountId: Openstack_7.18
     -   id: cirros_nsd_2
         is-shared-nss: 'false'
         description: Slice example for osm-5.0
-        nsd-ref: cirros_nsd
+        nsd-ref: 'cirros_2vnf_nsd'
         instantiation-parameters:
-        -   nsName: cirros_nsd
-            nsdId: cirros_nsd
-            vimAccountId: openstack_18
-    netslice-vld:
-    -   id: slice_cirros_vld1
-        name: slice_cirros_vld1
-        nsd-connection-point-ref:
-        -   nsd-ref: cirros_nsd
-            nsd-connection-point-ref: cirros_nsd_vld1
+            vimAccountId: Openstack_7.18

@@ -579,7 +579,7 @@ nbi_edit_input_schemas = {
 nsi_slice_instantiate = deepcopy(ns_instantiate)
 nsi_slice_instantiate["title"] = "netslice subnet instantiation params input schema"
 nsi_slice_instantiate["properties"]["id"] = name_schema
-nsi_slice_instantiate["required"].append("id")
+del nsi_slice_instantiate["required"]
 
 nsi_vld_instantiate = {
     "title": "netslice vld instantiation params input schema",
@@ -618,7 +618,7 @@ nsi_instantiate = {
             "items": nsi_vld_instantiate
         },
     },
-    "required": ["nsiName", "nstId", "vimAccountId"], 
+    "required": ["nsiName", "nstId", "vimAccountId"],
     "additionalProperties": False
 }
 
