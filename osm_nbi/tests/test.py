@@ -72,28 +72,19 @@ def usage():
 
 
 r_header_json = {"Content-type": "application/json"}
-headers_json = {
-    "Content-type": "application/json",
-    "Accept": "application/json",
-}
+headers_json = {"Content-type": "application/json", "Accept": "application/json"}
 r_header_yaml = {"Content-type": "application/yaml"}
-headers_yaml = {
-    "Content-type": "application/yaml",
-    "Accept": "application/yaml",
-}
+headers_yaml = {"Content-type": "application/yaml", "Accept": "application/yaml"}
 r_header_text = {"Content-type": "text/plain"}
 r_header_octect = {"Content-type": "application/octet-stream"}
-headers_text = {
-    "Accept": "text/plain",
-}
+headers_text = {"Accept": "text/plain,application/yaml"}
 r_header_zip = {"Content-type": "application/zip"}
-headers_zip = {
-    "Accept": "application/zip",
-}
-headers_zip_yaml = {
-    "Accept": "application/yaml", "Content-type": "application/zip"
-}
-
+headers_zip = {"Accept": "application/zip,application/yaml"}
+headers_zip_yaml = {"Accept": "application/yaml", "Content-type": "application/zip"}
+r_headers_yaml_location_vnfd = {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}
+r_headers_yaml_location_nsd = {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}
+r_headers_yaml_location_nst = {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}
+r_headers_yaml_location_nslcmop = {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}
 
 # test ones authorized
 test_authorized_list = (
@@ -712,7 +703,7 @@ class TestDeploy:
                 # vnfd CREATE AND UPLOAD in one step:
                 engine.test("Onboard VNFD in one step", "POST",
                             "/vnfpkgm/v1/vnf_packages_content" + self.qforce, headers, "@b" + vnfd_filename_path, 201,
-                            {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"},
+                            r_headers_yaml_location_vnfd,
                             "yaml")
                 self.vnfds_id.append(engine.last_id)
             else:
@@ -754,7 +745,7 @@ class TestDeploy:
             # nsd CREATE AND UPLOAD in one step:
             engine.test("Onboard NSD in one step", "POST",
                         "/nsd/v1/ns_descriptors_content" + self.qforce, headers, "@b" + nsd_filename_path, 201,
-                        {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, yaml)
+                        r_headers_yaml_location_nsd, yaml)
             self.nsd_id = engine.last_id
         else:
             # nsd CREATE AND UPLOAD ZIP
@@ -792,7 +783,7 @@ class TestDeploy:
         self.ns_id = engine.last_id
         engine.test("Instantiate NS step 2", "POST",
                     "/nslcm/v1/ns_instances/{}/instantiate".format(self.ns_id), headers_yaml, ns_data_text,
-                    201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                    201, r_headers_yaml_location_nslcmop, "yaml")
         nslcmop_id = engine.last_id
 
         if test_osm:
@@ -804,7 +795,7 @@ class TestDeploy:
         # remove deployment
         if test_osm:
             engine.test("Terminate NS", "POST", "/nslcm/v1/ns_instances/{}/terminate".format(self.ns_id), headers_yaml,
-                        None, 201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                        None, 201, r_headers_yaml_location_nslcmop, "yaml")
             nslcmop2_id = engine.last_id
             # Wait until status is Ok
             engine.wait_operation_ready("ns", nslcmop2_id, timeout_deploy)
@@ -1015,7 +1006,7 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
         for i in range(0, 2):
             engine.test("Execute scale action over NS", "POST",
                         "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
-                        201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                        201, r_headers_yaml_location_nslcmop, "yaml")
             nslcmop2_scale_out = engine.last_id
             engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
             if manual_check:
@@ -1028,7 +1019,7 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
         for i in range(0, 2):
             engine.test("Execute scale IN action over NS", "POST",
                         "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
-                        201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                        201, r_headers_yaml_location_nslcmop, "yaml")
             nslcmop2_scale_in = engine.last_id
             engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
             if manual_check:
@@ -1038,7 +1029,7 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
         # perform scale in that must fail as reached limit
         engine.test("Execute scale IN out of limit action over NS", "POST",
                     "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
-                    201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                    201, r_headers_yaml_location_nslcmop, "yaml")
         nslcmop2_scale_in = engine.last_id
         engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy, expected_fail=True)
 
@@ -1233,7 +1224,7 @@ class TestDeployHackfest3Charmed(TestDeploy):
         payload = '{member_vnf_index: "2", primitive: touch, primitive_params: { filename: /home/ubuntu/OSMTESTNBI }}'
         engine.test("Exec service primitive over NS", "POST",
                     "/nslcm/v1/ns_instances/{}/action".format(self.ns_id), headers_yaml, payload,
-                    201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+                    201, r_headers_yaml_location_nslcmop, "yaml")
         nslcmop2_action = engine.last_id
         # Wait until status is Ok
         engine.wait_operation_ready("ns", nslcmop2_action, timeout_deploy)
@@ -1251,7 +1242,7 @@ class TestDeployHackfest3Charmed(TestDeploy):
         #           '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
         # engine.test("Execute scale action over NS", "POST",
         #             "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
-        #             201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+        #             201, r_headers_yaml_location_nslcmop, "yaml")
         # nslcmop2_scale_out = engine.last_id
         # engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
         # if manual_check:
@@ -1263,7 +1254,7 @@ class TestDeployHackfest3Charmed(TestDeploy):
         #           '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
         # engine.test("Execute scale action over NS", "POST",
         #             "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
-        #             201, {"Location": "nslcm/v1/ns_lcm_op_occs/", "Content-Type": "application/yaml"}, "yaml")
+        #             201, r_headers_yaml_location_nslcmop, "yaml")
         # nslcmop2_scale_in = engine.last_id
         # engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
         # if manual_check:
@@ -1631,6 +1622,31 @@ class TestDescriptors:
         self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-3.0-three/2nd-hackfest/packages/"
         self.vnfd_id = None
         self.nsd_id = None
+        self.vnfd_empty = """vnfd:vnfd-catalog:
+            vnfd:
+            -   name: prova
+                short-name: prova
+                id: prova
+        """
+        self.vnfd_prova = """vnfd:vnfd-catalog:
+            vnfd:
+            -   connection-point:
+                -   name: cp_0h8m
+                    type: VPORT
+                id: prova
+                name: prova
+                short-name: prova
+                vdu:
+                -   id: vdu_z4bm
+                    image: ubuntu
+                    interface:
+                    -   external-connection-point-ref: cp_0h8m
+                        name: eth0
+                        virtual-interface:
+                        type: VIRTIO
+                    name: vdu_z4bm
+                version: '1.0'
+        """
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         engine.set_test_name("Descriptors")
@@ -1653,20 +1669,29 @@ class TestDescriptors:
         vnfd_filename_path = temp_dir + self.vnfd_filename
         nsd_filename_path = temp_dir + self.nsd_filename
 
-        # vnfd CREATE AND UPLOAD in one step:
-        engine.test("Onboard VNFD in one step", "POST",
-                    "/vnfpkgm/v1/vnf_packages_content", headers_zip_yaml, "@b" + vnfd_filename_path, 201,
-                    {"Location": "/vnfpkgm/v1/vnf_packages_content/", "Content-Type": "application/yaml"}, "yaml")
+        engine.test("Onboard empty VNFD in one step", "POST", "/vnfpkgm/v1/vnf_packages_content", headers_yaml,
+                    self.vnfd_empty, 201, r_headers_yaml_location_vnfd, "yaml")
         self.vnfd_id = engine.last_id
 
+        # test bug 605
+        engine.test("Upload invalid VNFD ", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id),
+                    headers_yaml, self.vnfd_prova, 422, r_header_yaml, "yaml")
+
+        engine.test("Upload VNFD {}".format(self.vnfd_filename), "PUT",
+                    "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id), headers_zip_yaml,
+                    "@b" + vnfd_filename_path, 204, None, 0)
+
+        # test bug 605
+        engine.test("Upload invalid VNFD ", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id),
+                    headers_yaml, self.vnfd_prova, 422, r_header_yaml, "yaml")
+
         # get vnfd descriptor
-        engine.test("Get VNFD descriptor", "GET",
-                    "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
+        engine.test("Get VNFD descriptor", "GET", "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id),
+                    headers_yaml, None, 200, r_header_yaml, "yaml")
 
         # get vnfd file descriptor
-        engine.test("Get VNFD file descriptor", "GET",
-                    "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(self.vnfd_id), headers_text, None, 200,
-                    r_header_text, "text", temp_dir+"vnfd-yaml")
+        engine.test("Get VNFD file descriptor", "GET", "/vnfpkgm/v1/vnf_packages/{}/vnfd".format(self.vnfd_id),
+                    headers_text, None, 200, r_header_text, "text", temp_dir+"vnfd-yaml")
         # TODO compare files: diff vnfd-yaml hackfest_3charmed_vnfd/hackfest_3charmed_vnfd.yaml
 
         # get vnfd zip file package
@@ -1682,25 +1707,22 @@ class TestDescriptors:
         # TODO compare files: diff vnfd-icon hackfest_3charmed_vnfd/icons/osm.png
 
         # nsd CREATE AND UPLOAD in one step:
-        engine.test("Onboard NSD in one step", "POST",
-                    "/nsd/v1/ns_descriptors_content", headers_zip_yaml, "@b" + nsd_filename_path, 201,
-                    {"Location": "/nsd/v1/ns_descriptors_content/", "Content-Type": "application/yaml"}, "yaml")
+        engine.test("Onboard NSD in one step", "POST", "/nsd/v1/ns_descriptors_content", headers_zip_yaml,
+                    "@b" + nsd_filename_path, 201, r_headers_yaml_location_nsd, "yaml")
         self.nsd_id = engine.last_id
 
         # get nsd descriptor
-        engine.test("Get NSD descriptor", "GET",
-                    "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 200, r_header_yaml, "yaml")
+        engine.test("Get NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml,
+                    None, 200, r_header_yaml, "yaml")
 
         # get nsd file descriptor
-        engine.test("Get NSD file descriptor", "GET",
-                    "/nsd/v1/ns_descriptors/{}/nsd".format(self.nsd_id), headers_text, None, 200,
-                    r_header_text, "text", temp_dir+"nsd-yaml")
+        engine.test("Get NSD file descriptor", "GET", "/nsd/v1/ns_descriptors/{}/nsd".format(self.nsd_id), headers_text,
+                    None, 200, r_header_text, "text", temp_dir+"nsd-yaml")
         # TODO compare files: diff nsd-yaml hackfest_3charmed_nsd/hackfest_3charmed_nsd.yaml
 
         # get nsd zip file package
-        engine.test("Get NSD zip package", "GET",
-                    "/nsd/v1/ns_descriptors/{}/nsd_content".format(self.nsd_id), headers_zip, None, 200,
-                    r_header_zip, "zip", temp_dir+"nsd-zip")
+        engine.test("Get NSD zip package", "GET", "/nsd/v1/ns_descriptors/{}/nsd_content".format(self.nsd_id),
+                    headers_zip, None, 200, r_header_zip, "zip", temp_dir+"nsd-zip")
         # TODO compare files: diff nsd-zip hackfest_3charmed_nsd.tar.gz
 
         # get nsd artifact
@@ -1710,15 +1732,15 @@ class TestDescriptors:
         # TODO compare files: diff nsd-icon hackfest_3charmed_nsd/icons/osm.png
 
         # vnfd DELETE
-        test_rest.test("Delete VNFD conflict", "DELETE",
-                       "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id), headers_yaml, None, 409, None, None)
+        test_rest.test("Delete VNFD conflict", "DELETE", "/vnfpkgm/v1/vnf_packages/{}".format(self.vnfd_id),
+                       headers_yaml, None, 409, None, None)
 
-        test_rest.test("Delete VNFD force", "DELETE",
-                       "/vnfpkgm/v1/vnf_packages/{}?FORCE=TRUE".format(self.vnfd_id), headers_yaml, None, 204, None, 0)
+        test_rest.test("Delete VNFD force", "DELETE", "/vnfpkgm/v1/vnf_packages/{}?FORCE=TRUE".format(self.vnfd_id),
+                       headers_yaml, None, 204, None, 0)
 
         # nsd DELETE
-        test_rest.test("Delete NSD", "DELETE",
-                       "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 204, None, 0)
+        test_rest.test("Delete NSD", "DELETE", "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml, None, 204,
+                       None, 0)
 
 
 class TestNetSliceTemplates:
@@ -1732,7 +1754,7 @@ class TestNetSliceTemplates:
         engine.set_test_name("NST")
         engine.get_autorization()
         engine.test("Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, self.nst_filenames,
-                    201, {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
+                    201, r_headers_yaml_location_nst, "yaml")
         nst_id = engine.last_id
 
         # nstd SHOW OSM format
@@ -1756,7 +1778,7 @@ class TestNetSliceInstances:
         engine.set_test_name("NSI")
         engine.get_autorization()
         engine.test("Onboard NST", "POST", "/nst/v1/netslice_templates_content", headers_yaml, self.nst_filenames, 201,
-                    {"Location": "/nst/v1/netslice_templates_content", "Content-Type": "application/yaml"}, "yaml")
+                    r_headers_yaml_location_nst, "yaml")
         nst_id = engine.last_id
 
         # nsi CREATE
@@ -1767,7 +1789,7 @@ class TestNetSliceInstances:
         ns_data_text = yaml.safe_dump(ns_data, default_flow_style=True, width=256)
 
         engine.test("Onboard NSI", "POST", "/nsilcm/v1/netslice_instances_content", headers_yaml, ns_data_text, 201,
-                    {"Location": "/nsilcm/v1/netslice_instances_content", "Content-Type": "application/yaml"}, "yaml")
+                    r_headers_yaml_location_nst, "yaml")
         nsi_id = engine.last_id
         
         # TODO: Improve the wait with a polling if NSI was deployed

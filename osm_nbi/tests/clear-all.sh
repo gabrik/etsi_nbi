@@ -83,11 +83,11 @@ fi
 for item in vim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects pdus nsts nsis nsilcmops # vims
 do
     curl --insecure ${OSMNBI_URL}/test/db-clear/${item}
-    echo " ${item}"
 done
+    curl --insecure ${OSMNBI_URL}/test/fs-clear
 if [ -n "$OSMNBI_COMPLETELY" ] ; then
-    curl --insecure ${OSMNBI_URL}/test/db-clear/users && echo " ${item}"
-    curl --insecure ${OSMNBI_URL}/test/db-clear/version && echo " ${item}"
+    curl --insecure ${OSMNBI_URL}/test/db-clear/users
+    curl --insecure ${OSMNBI_URL}/test/db-clear/admin
 else
     # delete all users except admin
     curl --insecure ${OSMNBI_URL}/test/db-clear/users?username.ne=admin

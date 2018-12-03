@@ -85,6 +85,7 @@ class DescriptorTopic(BaseTopic):
             return
         v = self.db.del_one(self.topic, {"_id": _id})
         self.fs.file_delete(_id, ignore_non_exist=True)
+        self.fs.file_delete(_id + "_", ignore_non_exist=True)  # remove temp folder
         self._send_msg("delete", {"_id": _id})
         return v
 
@@ -185,18 +186,19 @@ class DescriptorTopic(BaseTopic):
                 total = int(content_range[3])
             else:
                 start = 0
+            temp_folder = _id + "_"  # all the content is upload here and if ok, it is rename from id_ to is folder
 
             if start:
-                if not self.fs.file_exists(_id, 'dir'):
+                if not self.fs.file_exists(temp_folder, 'dir'):
                     raise EngineException("invalid Transaction-Id header", HTTPStatus.NOT_FOUND)
             else:
-                self.fs.file_delete(_id, ignore_non_exist=True)
-                self.fs.mkdir(_id)
+                self.fs.file_delete(temp_folder, ignore_non_exist=True)
+                self.fs.mkdir(temp_folder)
 
             storage = self.fs.get_params()
             storage["folder"] = _id
 
-            file_path = (_id, filename)
+            file_path = (temp_folder, filename)
             if self.fs.file_exists(file_path, 'file'):
                 file_size = self.fs.file_size(file_path)
             else:
@@ -256,8 +258,8 @@ class DescriptorTopic(BaseTopic):
                     raise EngineException("Not found any descriptor file at package descriptor tar.gz")
                 storage["descriptor"] = descriptor_file_name
                 storage["zipfile"] = filename
-                self.fs.file_extract(tar, _id)
-                with self.fs.file_open((_id, descriptor_file_name), "r") as descriptor_file:
+                self.fs.file_extract(tar, temp_folder)
+                with self.fs.file_open((temp_folder, descriptor_file_name), "r") as descriptor_file:
                     content = descriptor_file.read()
             else:
                 content = file_pkg.read()
@@ -285,6 +287,7 @@ class DescriptorTopic(BaseTopic):
             deep_update_rfc7396(current_desc, indata)
             self.check_conflict_on_edit(session, current_desc, indata, _id=_id, force=force)
             self.db.replace(self.topic, _id, current_desc)
+            self.fs.dir_rename(temp_folder, _id)
 
             indata["_id"] = _id
             self._send_msg("created", indata)

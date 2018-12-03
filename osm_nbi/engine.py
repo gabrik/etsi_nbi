@@ -225,13 +225,6 @@ class Engine(object):
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.map_topic[topic].edit(session, _id, indata, kwargs, force)
 
-    def prune(self):
-        """
-        Prune database not needed content
-        :return: None
-        """
-        return self.db.del_list("nsrs", {"_admin.to_delete": True})
-
     def create_admin(self):
         """
         Creates a new user admin/admin into database if database is empty. Useful for initialization

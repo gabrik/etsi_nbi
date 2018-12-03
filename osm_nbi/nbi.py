@@ -444,7 +444,8 @@ class Server(object):
 
             elif "application/yaml" in accept or "*/*" in accept or "text/plain" in accept:
                 pass
-            else:
+            # if there is not any valid accept, raise an error. But if response is already an error, format in yaml
+            elif cherrypy.response.status >= 400:
                 raise cherrypy.HTTPError(HTTPStatus.NOT_ACCEPTABLE.value,
                                          "Only 'Accept' of type 'application/json' or 'application/yaml' "
                                          "for output format are available")
@@ -544,7 +545,7 @@ class Server(object):
     def test(self, *args, **kwargs):
         thread_info = None
         if args and args[0] == "help":
-            return "<html><pre>\ninit\nfile/<name>  download file\ndb-clear/table\nprune\nlogin\nlogin2\n"\
+            return "<html><pre>\ninit\nfile/<name>  download file\ndb-clear/table\nfs-clear[/folder]\nlogin\nlogin2\n"\
                    "sleep/<time>\nmessage/topic\n</pre></html>"
 
         elif args and args[0] == "init":
@@ -565,9 +566,16 @@ class Server(object):
             return f
 
         elif len(args) == 2 and args[0] == "db-clear":
-            return self.engine.db.del_list(args[1], kwargs)
-        elif args and args[0] == "prune":
-            return self.engine.prune()
+            deleted_info = self.engine.db.del_list(args[1], kwargs)
+            return "{} {} deleted\n".format(deleted_info["deleted"], args[1])
+        elif len(args) and args[0] == "fs-clear":
+            if len(args) >= 2:
+                folders = (args[1],)
+            else:
+                folders = self.engine.fs.dir_ls(".")
+            for folder in folders:
+                self.engine.fs.file_delete(folder)
+            return ",".join(folders) + " folders deleted\n"
         elif args and args[0] == "login":
             if not cherrypy.request.headers.get("Authorization"):
                 cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="Access to OSM site", charset="UTF-8"'
@@ -614,7 +622,7 @@ class Server(object):
             "  session: {}\n".format(cherrypy.session) +
             "  cookie: {}\n".format(cherrypy.request.cookie) +
             "  method: {}\n".format(cherrypy.request.method) +
-            " session: {}\n".format(cherrypy.session.get('fieldname')) +
+            "  session: {}\n".format(cherrypy.session.get('fieldname')) +
             "  body:\n")
         return_text += "    length: {}\n".format(cherrypy.request.body.length)
         if cherrypy.request.body.length:
