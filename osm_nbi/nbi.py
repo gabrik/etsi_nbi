@@ -101,7 +101,9 @@ URL: /osm                                                       GET     POST    
                 /<id>                                           O               O       O       O
             /projects                                           O       O
                 /<id>                                           O                       O
-            /vims_accounts  (also vims for compatibility)       O       O
+            /vim_accounts  (also vims for compatibility)        O       O
+                /<id>                                           O                       O       O
+            /wim_accounts                                       O       O
                 /<id>                                           O                       O       O
             /sdns                                               O       O
                 /<id>                                           O                       O       O
@@ -212,6 +214,9 @@ class Server(object):
                              "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                              },
                     "vim_accounts": {"METHODS": ("GET", "POST"),
+                                     "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
+                                     },
+                    "wim_accounts": {"METHODS": ("GET", "POST"),
                                      "<ID>": {"METHODS": ("GET", "DELETE", "PATCH", "PUT")}
                                      },
                     "sdns": {"METHODS": ("GET", "POST"),
@@ -831,7 +836,7 @@ class Server(object):
                     else:
                         self.engine.del_item(session, engine_topic, _id, force)
                         cherrypy.response.status = HTTPStatus.NO_CONTENT.value
-                if engine_topic in ("vim_accounts", "sdns"):
+                if engine_topic in ("vim_accounts", "wim_accounts", "sdns"):
                     cherrypy.response.status = HTTPStatus.ACCEPTED.value
 
             elif method in ("PUT", "PATCH"):

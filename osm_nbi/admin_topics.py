@@ -19,6 +19,7 @@ from hashlib import sha256
 from http import HTTPStatus
 from validation import user_new_schema, user_edit_schema, project_new_schema, project_edit_schema
 from validation import vim_account_new_schema, vim_account_edit_schema, sdn_new_schema, sdn_edit_schema
+from validation import wim_account_new_schema, wim_account_edit_schema
 from base_topic import BaseTopic, EngineException
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
@@ -196,6 +197,70 @@ class VimAccountTopic(BaseTopic):
         else:  # if not, sent to kafka
             v = BaseTopic.delete(self, session, _id, force, dry_run=True)
             self.db.set_one("vim_accounts", {"_id": _id}, {"_admin.to_delete": True})  # TODO change status
+            self._send_msg("delete", {"_id": _id})
+            return v  # TODO indicate an offline operation to return 202 ACCEPTED
+
+
+class WimAccountTopic(BaseTopic):
+    topic = "wim_accounts"
+    topic_msg = "wim_account"
+    schema_new = wim_account_new_schema
+    schema_edit = wim_account_edit_schema
+    wim_config_encrypted = ()
+
+    def __init__(self, db, fs, msg):
+        BaseTopic.__init__(self, db, fs, msg)
+
+    def check_conflict_on_new(self, session, indata, force=False):
+        self.check_unique_name(session, indata["name"], _id=None)
+
+    def check_conflict_on_edit(self, session, final_content, edit_content, _id, force=False):
+        if not force and edit_content.get("name"):
+            self.check_unique_name(session, edit_content["name"], _id=_id)
+
+        # encrypt passwords
+        schema_version = final_content.get("schema_version")
+        if schema_version:
+            if edit_content.get("wim_password"):
+                final_content["wim_password"] = self.db.encrypt(edit_content["wim_password"],
+                                                                schema_version=schema_version, salt=_id)
+            if edit_content.get("config"):
+                for p in self.wim_config_encrypted:
+                    if edit_content["config"].get(p):
+                        final_content["config"][p] = self.db.encrypt(edit_content["config"][p],
+                                                                     schema_version=schema_version, salt=_id)
+
+    def format_on_new(self, content, project_id=None, make_public=False):
+        BaseTopic.format_on_new(content, project_id=project_id, make_public=make_public)
+        content["schema_version"] = schema_version = "1.1"
+
+        # encrypt passwords
+        if content.get("wim_password"):
+            content["wim_password"] = self.db.encrypt(content["wim_password"], schema_version=schema_version,
+                                                      salt=content["_id"])
+        if content.get("config"):
+            for p in self.wim_config_encrypted:
+                if content["config"].get(p):
+                    content["config"][p] = self.db.encrypt(content["config"][p], schema_version=schema_version,
+                                                           salt=content["_id"])
+
+        content["_admin"]["operationalState"] = "PROCESSING"
+
+    def delete(self, session, _id, force=False, dry_run=False):
+        """
+        Delete item by its internal _id
+        :param session: contains the used login username, working project, and admin rights
+        :param _id: server internal id
+        :param force: indicates if deletion must be forced in case of conflict
+        :param dry_run: make checking but do not delete
+        :return: dictionary with deleted item _id. It raises EngineException on error: not found, conflict, ...
+        """
+        # TODO add admin to filter, validate rights
+        if dry_run or force:    # delete completely
+            return BaseTopic.delete(self, session, _id, force, dry_run)
+        else:  # if not, sent to kafka
+            v = BaseTopic.delete(self, session, _id, force, dry_run=True)
+            self.db.set_one("wim_accounts", {"_id": _id}, {"_admin.to_delete": True})  # TODO change status
             self._send_msg("delete", {"_id": _id})
             return v  # TODO indicate an offline operation to return 202 ACCEPTED
 

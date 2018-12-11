@@ -80,7 +80,7 @@ then
     done
 fi
 
-for item in vim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects pdus nsts nsis nsilcmops # vims
+for item in vim_accounts wim_accounts sdns nsrs vnfrs nslcmops nsds vnfds projects pdus nsts nsis nsilcmops # vims
 do
     curl --insecure ${OSMNBI_URL}/test/db-clear/${item}
 done
@@ -98,6 +98,8 @@ then
     for dc in `openmano datacenter-list | awk '{print $1}'` ; do openmano datacenter-detach $dc ; done
     for dc in `openmano datacenter-list --all | awk '{print $1}'` ; do openmano datacenter-delete -f  $dc ; done
     for dc in `openmano sdn-controller-list | awk '{print $1}'` ; do openmano sdn-controller-delete -f $dc ; done
+    for dc in `openmano wim-list | awk '{print $1}'` ; do openmano wim-detach $dc ; done
+    for dc in `openmano wim-list --all | awk '{print $1}'` ; do openmano wim-delete -f  $dc ; done
 fi
 
 if [ -n "$OSMNBI_CLEAN_VCA" ]

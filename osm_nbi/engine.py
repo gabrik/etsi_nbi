@@ -20,7 +20,7 @@ from osm_common.fsbase import FsException
 from osm_common.msgbase import MsgException
 from http import HTTPStatus
 from base_topic import EngineException, versiontuple
-from admin_topics import UserTopic, ProjectTopic, VimAccountTopic, SdnTopic
+from admin_topics import UserTopic, ProjectTopic, VimAccountTopic, WimAccountTopic, SdnTopic
 from descriptor_topics import VnfdTopic, NsdTopic, PduTopic, NstTopic
 from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic, NsiTopic, NsiLcmOpTopic
 from base64 import b64encode
@@ -40,6 +40,7 @@ class Engine(object):
         "vnfrs": VnfrTopic,
         "nslcmops": NsLcmOpTopic,
         "vim_accounts": VimAccountTopic,
+        "wim_accounts": WimAccountTopic,
         "sdns": SdnTopic,
         "users": UserTopic,
         "projects": ProjectTopic,

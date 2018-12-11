@@ -325,6 +325,7 @@ ns_scale = {   # TODO for the moment it is only VDU-scaling
 
 
 schema_version = {"type": "string", "enum": ["1.0"]}
+schema_type = {"type": "string"}
 vim_account_edit_schema = {
     "title": "vim_account edit input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
@@ -332,7 +333,7 @@ vim_account_edit_schema = {
     "properties": {
         "name": name_schema,
         "description": description_schema,
-        "type": nameshort_schema,  # currently "openvim" or "openstack", can be enlarged with plugins
+        "type": nameshort_schema,
         "vim": name_schema,
         "datacenter": name_schema,
         "vim_url": description_schema,
@@ -345,7 +346,6 @@ vim_account_edit_schema = {
     },
     "additionalProperties": False
 }
-schema_type = {"type": "string"}
 
 vim_account_new_schema = {
     "title": "vim_account creation input schema",
@@ -371,6 +371,42 @@ vim_account_new_schema = {
     "additionalProperties": False
 }
 
+wim_account_edit_schema = {
+    "title": "wim_account edit input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "name": name_schema,
+        "description": description_schema,
+        "type": nameshort_schema,
+        "wim": name_schema,
+        "wim_url": description_schema,
+        "user": nameshort_schema,
+        "password": passwd_schema,
+        "config": {"type": "object"}
+    },
+    "additionalProperties": False
+}
+
+wim_account_new_schema = {
+    "title": "wim_account creation input schema",
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {
+        "schema_version": schema_version,
+        "schema_type": schema_type,
+        "name": name_schema,
+        "description": description_schema,
+        "wim": name_schema,
+        "wim_type": {"enum": ["tapi", "onos", "odl", "dynpac"]},
+        "wim_url": description_schema,
+        "user": nameshort_schema,
+        "password": passwd_schema,
+        "config": {"type": "object"}
+    },
+    "required": ["name", "wim_url", "wim_type"],
+    "additionalProperties": False
+}
 
 sdn_properties = {
     "name": name_schema,

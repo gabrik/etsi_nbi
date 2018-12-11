@@ -355,7 +355,8 @@ class TestRest:
 
         wait = timeout_delete
         while wait >= 0:
-            r = self.test(description, "GET", url, headers_yaml, (200, 404), None, r_header_yaml, "yaml", pooling=True)
+            r = self.test(description, "GET", url_op, headers_yaml, None, (200, 404), None, r_header_yaml, "yaml",
+                          pooling=True)
             if not r:
                 return
             if r.status_code == 404:
@@ -609,6 +610,17 @@ class TestVIMSDN(TestFakeVim):
 
     def __init__(self):
         TestFakeVim.__init__(self)
+        self.wim = {
+            "schema_version": "1.0",
+            "schema_type": "No idea",
+            "name": "myWim",
+            "description": "Descriptor name",
+            "wim_type": "odl",
+            "wim_url": "http://localhost:/wim",
+            "user": "user",
+            "password": "password",
+            "config": {"config_param": 1}
+        }
 
     def run(self, engine, test_osm, manual_check, test_params=None):
         engine.set_test_name("VimSdn")
@@ -635,6 +647,10 @@ class TestVIMSDN(TestFakeVim):
         engine.test("Edit VIM remove port-mapping", "PUT", "/admin/v1/vim_accounts/{}".format(vim_id), headers_json,
                     {"config": {"sdn-port-mapping": None}}, 204, None, None)
 
+        engine.test("Create WIM", "POST", "/admin/v1/wim_accounts", headers_json, self.wim, (200, 204, 201),
+                    {"Location": "/admin/v1/wim_accounts/", "Content-Type": "application/json"}, "json"),
+        wim_id = engine.last_id
+
         if not test_osm:
             # delete with FORCE
             engine.test("Delete VIM remove port-mapping", "DELETE",
@@ -642,18 +658,27 @@ class TestVIMSDN(TestFakeVim):
             engine.test("Delete SDNC", "DELETE", "/admin/v1/sdns/{}?FORCE=True".format(sdnc_id), headers_json, None,
                         202, None, 0)
 
+            engine.test("Delete WIM", "DELETE",
+                        "/admin/v1/wim_accounts/{}?FORCE=True".format(wim_id), headers_json, None, 202, None, 0)
             engine.test("Check VIM is deleted", "GET", "/admin/v1/vim_accounts/{}".format(vim_id), headers_yaml,
                         None, 404, r_header_yaml, "yaml")
             engine.test("Check SDN is deleted", "GET", "/admin/v1/sdns/{}".format(sdnc_id), headers_yaml, None,
                         404, r_header_yaml, "yaml")
+            engine.test("Check WIM is deleted", "GET", "/admin/v1/wim_accounts/{}".format(wim_id), headers_yaml,
+                        None, 404, r_header_yaml, "yaml")
         else:
+            if manual_check:
+                input('VIM, SDN, WIM has been deployed. Perform manual check and press enter to resume')
             # delete and wait until is really deleted
             engine.test("Delete VIM remove port-mapping", "DELETE", "/admin/v1/vim_accounts/{}".format(vim_id),
                         headers_json, None, (202, 201, 204), None, 0)
             engine.test("Delete SDN", "DELETE", "/admin/v1/sdns/{}".format(sdnc_id), headers_json, None,
                         (202, 201, 204), None, 0)
+            engine.test("Delete VIM", "DELETE", "/admin/v1/wim_accounts/{}".format(wim_id),
+                        headers_json, None, (202, 201, 204), None, 0)
             engine.wait_until_delete("/admin/v1/vim_accounts/{}".format(vim_id), timeout)
             engine.wait_until_delete("/admin/v1/sdns/{}".format(sdnc_id), timeout)
+            engine.wait_until_delete("/admin/v1/wim_accounts/{}".format(wim_id), timeout)
 
 
 class TestDeploy:
