@@ -21,6 +21,7 @@ from copy import copy, deepcopy
 from validation import validate_input, ValidationError, ns_instantiate, ns_action, ns_scale, nsi_instantiate
 from base_topic import BaseTopic, EngineException, get_iterable
 from descriptor_topics import DescriptorTopic
+from yaml import safe_dump
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
@@ -74,6 +75,7 @@ class NsrTopic(BaseTopic):
         if dry_run:
             return
 
+        self.fs.file_delete(_id, ignore_non_exist=True)
         v = self.db.del_one("nsrs", {"_id": _id})
         self.db.del_list("nslcmops", {"nsInstanceId": _id})
         self.db.del_list("vnfrs", {"nsr-id-ref": _id})
@@ -82,6 +84,61 @@ class NsrTopic(BaseTopic):
                          {"_admin.usageState": "NOT_IN_USE", "_admin.usage": None})
         self._send_msg("deleted", {"_id": _id})
         return v
+
+    @staticmethod
+    def _format_ns_request(ns_request):
+        formated_request = copy(ns_request)
+        formated_request.pop("additionalParamsForNs", None)
+        formated_request.pop("additionalParamsForVnf", None)
+        return formated_request
+
+    @staticmethod
+    def _format_addional_params(ns_request, member_vnf_index=None, descriptor=None):
+        """
+        Get and format user additional params for NS or VNF
+        :param ns_request: User instantiation additional parameters
+        :param member_vnf_index: None for extract NS params, or member_vnf_index to extract VNF params
+        :param descriptor: If not None it check that needed parameters of descriptor are supplied
+        :return: a formated copy of additional params or None if not supplied
+        """
+        additional_params = None
+        if not member_vnf_index:
+            additional_params = copy(ns_request.get("additionalParamsForNs"))
+            where_ = "additionalParamsForNs"
+        elif ns_request.get("additionalParamsForVnf"):
+            for additionalParamsForVnf in get_iterable(ns_request.get("additionalParamsForVnf")):
+                if additionalParamsForVnf["member-vnf-index"] == member_vnf_index:
+                    additional_params = copy(additionalParamsForVnf.get("additionalParams"))
+                    where_ = "additionalParamsForVnf[member-vnf-index={}]".format(
+                        additionalParamsForVnf["member-vnf-index"])
+                    break
+        if additional_params:
+            for k, v in additional_params.items():
+                if not isinstance(k, str):
+                    raise EngineException("Invalid param at {}:{}. Only string keys are allowed".format(where_, k))
+                if "." in k or "$" in k:
+                    raise EngineException("Invalid param at {}:{}. Keys must not contain dots or $".format(where_, k))
+                if isinstance(v, (dict, tuple, list)):
+                    additional_params[k] = "!!yaml " + safe_dump(v)
+
+        if descriptor:
+            # check that enough parameters are supplied for the initial-config-primitive
+            # TODO: check for cloud-init
+            if member_vnf_index:
+                if descriptor.get("vnf-configuration"):
+                    for initial_primitive in get_iterable(
+                            descriptor["vnf-configuration"].get("initial-config-primitive")):
+                        for param in get_iterable(initial_primitive.get("parameter")):
+                            if param["value"].startswith("<") and param["value"].endswith(">"):
+                                if param["value"] in ("<rw_mgmt_ip>", "<VDU_SCALE_INFO>"):
+                                    continue
+                                if not additional_params or param["value"][1:-1] not in additional_params:
+                                    raise EngineException("Parameter '{}' needed for vnfd[id={}]:vnf-configuration:"
+                                                          "initial-config-primitive[name={}] not supplied".
+                                                          format(param["value"], descriptor["id"],
+                                                                 initial_primitive["name"]))
+
+        return additional_params
 
     def new(self, rollback, session, indata=None, kwargs=None, headers=None, force=False, make_public=False):
         """
@@ -110,6 +167,7 @@ class NsrTopic(BaseTopic):
             nsd = self.db.get_one("nsds", _filter)
 
             nsr_id = str(uuid4())
+
             now = time()
             step = "filling nsr from input data"
             nsr_descriptor = {
@@ -134,7 +192,8 @@ class NsrTopic(BaseTopic):
                 "nsd-name-ref": nsd["name"],
                 "operational-events": [],   # "id", "timestamp", "description", "event",
                 "nsd-ref": nsd["id"],
-                "instantiate_params": ns_request,
+                "instantiate_params": self._format_ns_request(ns_request),
+                "additionalParamsForNs": self._format_addional_params(ns_request),
                 "ns-instance-config-ref": nsr_id,
                 "id": nsr_id,
                 "_id": nsr_id,
@@ -170,6 +229,8 @@ class NsrTopic(BaseTopic):
                     "_id": vnfr_id,
                     "nsr-id-ref": nsr_id,
                     "member-vnf-index-ref": member_vnf["member-vnf-index"],
+                    "additionalParamsForVnf": self._format_addional_params(ns_request, member_vnf["member-vnf-index"],
+                                                                           vnfd),
                     "created-time": now,
                     # "vnfd": vnfd,        # at OSM model.but removed to avoid data duplication TODO: revise
                     "vnfd-ref": vnfd_id,
@@ -277,6 +338,10 @@ class NsrTopic(BaseTopic):
             self.format_on_new(nsr_descriptor, session["project_id"], make_public=make_public)
             self.db.create("nsrs", nsr_descriptor)
             rollback.append({"topic": "nsrs", "_id": nsr_id})
+
+            step = "creating nsr temporal folder"
+            self.fs.mkdir(nsr_id)
+
             return nsr_id
         except Exception as e:
             self.logger.exception("Exception {} at NsrTopic.new()".format(e), exc_info=True)

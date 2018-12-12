@@ -190,7 +190,18 @@ class TestRest:
             stream = False
             if expected_payload in ("zip", "octet-string") or store_file:
                 stream = True
-            r = getattr(self.s, method.lower())(url, data=payload, headers=headers, verify=self.verify, stream=stream)
+            __retry = 0
+            while True:
+                try:
+                    r = getattr(self.s, method.lower())(url, data=payload, headers=headers, verify=self.verify,
+                                                        stream=stream)
+                    break
+                except requests.exceptions.ConnectionError as e:
+                    if __retry == 2:
+                        raise
+                    logger.error("Exception {}. Retrying".format(e))
+                    __retry += 1
+
             if expected_payload in ("zip", "octet-string") or store_file:
                 logger.debug("RX {}".format(r.status_code))
             else:
@@ -270,6 +281,8 @@ class TestRest:
             self.failed_tests += 1
             return None
             # exit(1)
+        except requests.exceptions.RequestException as e:
+            logger.error("Exception: {}".format(e))
 
     def get_autorization(self):  # user=None, password=None, project=None):
         if self.token:  # and self.user == user and self.password == password and self.project == project:
@@ -395,8 +408,7 @@ class TestRest:
             nslcmop = r.json()
             if "COMPLETED" in nslcmop["operationState"]:
                 if expected_fail:
-                    logger.error("NS terminate has success, expecting failing: {}".format(
-                        nslcmop["detailed-status"]))
+                    logger.error("NS terminate has success, expecting failing: {}".format(nslcmop["detailed-status"]))
                     self.failed_tests += 1
                 else:
                     self.passed_tests += 1
@@ -404,6 +416,7 @@ class TestRest:
             elif "FAILED" in nslcmop["operationState"]:
                 if not expected_fail:
                     logger.error("NS terminate has failed: {}".format(nslcmop["detailed-status"]))
+                    self.failed_tests += 1
                 else:
                     self.passed_tests += 1
                 break
@@ -419,7 +432,7 @@ class TestRest:
 
 
 class TestNonAuthorized:
-    description = "test invalid URLs. methods and no authorization"
+    description = "Test invalid URLs. methods and no authorization"
 
     @staticmethod
     def run(engine, test_osm, manual_check, test_params=None):
@@ -695,12 +708,13 @@ class TestDeploy:
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
         self.descriptor_edit = None
         self.uses_configuration = False
-        self.uss = {}
-        self.passwds = {}
-        self.cmds = {}
+        self.users = {}
+        self.passwords = {}
+        self.commands = {}
         self.keys = {}
         self.timeout = 120
         self.qforce = ""
+        self.ns_params = None
 
     def create_descriptors(self, engine):
         temp_dir = os.path.dirname(os.path.abspath(__file__)) + "/temp/"
@@ -854,6 +868,11 @@ class TestDeploy:
 
         vnfr_list = ns_data['constituent-vnfr-ref']
         time = 0
+        _commands = commands if commands is not None else self.commands
+        _users = users if users is not None else self.users
+        _passwds = passwds if passwds is not None else self.passwords
+        _keys = keys if keys is not None else self.keys
+        _timeout = timeout if timeout != 0 else self.timeout
 
         for vnfr_id in vnfr_list:
             r = engine.test("Get VNFR to get IP_ADDRESS", "GET",
@@ -864,19 +883,19 @@ class TestDeploy:
             vnfr_data = r.json()
 
             vnf_index = str(vnfr_data["member-vnf-index-ref"])
-            if not commands.get(vnf_index):
+            if not _commands.get(vnf_index):
                 continue
             if vnfr_data.get("ip-address"):
-                description = "Exec command='{}' at VNFR={} IP={}".format(commands.get(vnf_index)[0], vnf_index,
+                description = "Exec command='{}' at VNFR={} IP={}".format(_commands.get(vnf_index)[0], vnf_index,
                                                                           vnfr_data['ip-address'])
                 engine.step += 1
                 test_description = "{}{} {}".format(engine.test_name, engine.step, description)
                 logger.warning(test_description)
-                while timeout >= time:
+                while _timeout >= time:
                     result, message = self.do_checks([vnfr_data["ip-address"]],
                                                      vnf_index=vnfr_data["member-vnf-index-ref"],
-                                                     commands=commands.get(vnf_index), user=users.get(vnf_index),
-                                                     passwd=passwds.get(vnf_index), key=keys.get(vnf_index))
+                                                     commands=_commands.get(vnf_index), user=_users.get(vnf_index),
+                                                     passwd=_passwds.get(vnf_index), key=_keys.get(vnf_index))
                     if result == 1:
                         engine.passed_tests += 1
                         logger.debug(message)
@@ -923,16 +942,17 @@ class TestDeploy:
                 output = client.run_command(cmd)
                 client.join(output)
                 if output[ip[0]].exit_code:
-                    return -1, "    VNFR {} command '{}' returns error: {}".format(ip[0], cmd, output[ip[0]].stderr)
+                    return -1, "VNFR {} command '{}' returns error: '{}'".format(ip[0], cmd,
+                                                                                 "\n".join(output[ip[0]].stderr))
                 else:
-                    return 1, "     VNFR {} command '{}' successful".format(ip[0], cmd)
+                    return 1, "VNFR {} command '{}' successful".format(ip[0], cmd)
         except (ssh2Exception.ChannelFailure, ssh2Exception.SocketDisconnectError, ssh2Exception.SocketTimeout,
                 ssh2Exception.SocketRecvError) as e:
             return 0, "Timeout accessing the VNFR {}: {}".format(ip[0], str(e))
         except Exception as e:
             return -1, "ERROR checking the VNFR {}: {}".format(ip[0], str(e))
 
-    def aditional_operations(self, engine, test_osm, manual_check):
+    def additional_operations(self, engine, test_osm, manual_check):
         pass
 
     def run(self, engine, test_osm, manual_check, test_params=None):
@@ -952,6 +972,8 @@ class TestDeploy:
         self.vim_id = engine.get_create_vim(test_osm)
         ns_data = {"nsDescription": "default description", "nsName": nsname, "nsdId": self.nsd_id,
                    "vimAccountId": self.vim_id}
+        if self.ns_params:
+            ns_data.update(self.ns_params)
         if test_params and test_params.get("ns-config"):
             if isinstance(test_params["ns-config"], str):
                 ns_data.update(yaml.load(test_params["ns-config"]))
@@ -961,9 +983,9 @@ class TestDeploy:
 
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
-        if test_osm and self.cmds:
-            self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
-        self.aditional_operations(engine, test_osm, manual_check)
+        if test_osm and self.commands:
+            self.test_ns(engine, test_osm)
+        self.additional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
         self.delete_descriptors(engine)
 
@@ -976,9 +998,9 @@ class TestDeployHackfestCirros(TestDeploy):
         self.test_name = "CIRROS"
         self.vnfd_filenames = ("cirros_vnf.tar.gz",)
         self.nsd_filename = "cirros_2vnf_ns.tar.gz"
-        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
-        self.uss = {'1': "cirros", '2': "cirros"}
-        self.pss = {'1': "cubswin:)", '2': "cubswin:)"}
+        self.commands = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.users = {'1': "cirros", '2': "cirros"}
+        self.passwords = {'1': "cubswin:)", '2': "cubswin:)"}
 
 
 class TestDeployHackfest1(TestDeploy):
@@ -989,9 +1011,9 @@ class TestDeployHackfest1(TestDeploy):
         self.test_name = "HACKFEST1-"
         self.vnfd_filenames = ("hackfest_1_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_1_nsd.tar.gz"
-        # self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
-        # self.uss = {'1': "cirros", '2': "cirros"}
-        # self.pss = {'1': "cubswin:)", '2': "cubswin:)"}
+        # self.commands = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        # self.users = {'1': "cirros", '2': "cirros"}
+        # self.passwords = {'1': "cubswin:)", '2': "cubswin:)"}
 
 
 class TestDeployHackfestCirrosScaling(TestDeploy):
@@ -1022,7 +1044,7 @@ class TestDeployHackfestCirrosScaling(TestDeploy):
             }
         }
 
-    def aditional_operations(self, engine, test_osm, manual_check):
+    def additional_operations(self, engine, test_osm, manual_check):
         if not test_osm:
             return
         # 2 perform scale out twice
@@ -1069,9 +1091,9 @@ class TestDeployIpMac(TestDeploy):
         self.nsd_filename = "scenario_2vdu_set_ip_mac.yaml"
         self.descriptor_url = \
             "https://osm.etsi.org/gitweb/?p=osm/RO.git;a=blob_plain;f=test/RO_tests/v3_2vdu_set_ip_mac/"
-        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
-        self.uss = {'1': "osm", '2': "osm"}
-        self.pss = {'1': "osm4u", '2': "osm4u"}
+        self.commands = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.users = {'1': "osm", '2': "osm"}
+        self.passwords = {'1': "osm4u", '2': "osm4u"}
         self.timeout = 360
 
     def run(self, engine, test_osm, manual_check, test_params=None):
@@ -1143,9 +1165,9 @@ class TestDeployHackfest4(TestDeploy):
         self.vnfd_filenames = ("hackfest_4_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_4_nsd.tar.gz"
         self.uses_configuration = True
-        self.cmds = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
-        self.uss = {'1': "ubuntu", '2': "ubuntu"}
-        self.pss = {'1': "osm4u", '2': "osm4u"}
+        self.commands = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
+        self.users = {'1': "ubuntu", '2': "ubuntu"}
+        self.passwords = {'1': "osm4u", '2': "osm4u"}
 
     def create_descriptors(self, engine):
         super().create_descriptors(engine)
@@ -1195,8 +1217,7 @@ class TestDeployHackfest4(TestDeploy):
 
 
 class TestDeployHackfest3Charmed(TestDeploy):
-    description = "Load and deploy Hackfest 3charmed_ns example. Modifies it for adding scaling and performs " \
-                  "primitive actions and scaling"
+    description = "Load and deploy Hackfest 3charmed_ns example"
 
     def __init__(self):
         super().__init__()
@@ -1204,45 +1225,11 @@ class TestDeployHackfest3Charmed(TestDeploy):
         self.vnfd_filenames = ("hackfest_3charmed_vnfd.tar.gz",)
         self.nsd_filename = "hackfest_3charmed_nsd.tar.gz"
         self.uses_configuration = True
-        self.cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
-        self.uss = {'1': "ubuntu", '2': "ubuntu"}
-        self.pss = {'1': "osm4u", '2': "osm4u"}
-        # self.descriptor_edit = {
-        #     "vnfd0": yaml.load("""
-        #         scaling-group-descriptor:
-        #             -   name: "scale_dataVM"
-        #                 max-instance-count: 10
-        #                 scaling-policy:
-        #                 -   name: "auto_cpu_util_above_threshold"
-        #                     scaling-type: "automatic"
-        #                     threshold-time: 0
-        #                     cooldown-time: 60
-        #                     scaling-criteria:
-        #                     -   name: "cpu_util_above_threshold"
-        #                         scale-in-threshold: 15
-        #                         scale-in-relational-operation: "LE"
-        #                         scale-out-threshold: 60
-        #                         scale-out-relational-operation: "GE"
-        #                         vnf-monitoring-param-ref: "all_aaa_cpu_util"
-        #                 vdu:
-        #                 -   vdu-id-ref: dataVM
-        #                     count: 1
-        #                 scaling-config-action:
-        #                 -   trigger: post-scale-out
-        #                     vnf-config-primitive-name-ref: touch
-        #                 -   trigger: pre-scale-in
-        #                     vnf-config-primitive-name-ref: touch
-        #         vnf-configuration:
-        #             config-primitive:
-        #             -   name: touch
-        #                 parameter:
-        #                 -   name: filename
-        #                     data-type: STRING
-        #                     default-value: '/home/ubuntu/touched'
-        #         """)
-        #     }
+        self.commands = {'1': ['ls -lrt /home/ubuntu/first-touch'], '2': ['ls -lrt /home/ubuntu/first-touch']}
+        self.users = {'1': "ubuntu", '2': "ubuntu"}
+        self.passwords = {'1': "osm4u", '2': "osm4u"}
 
-    def aditional_operations(self, engine, test_osm, manual_check):
+    def additional_operations(self, engine, test_osm, manual_check):
         if not test_osm:
             return
         # 1 perform action
@@ -1257,10 +1244,8 @@ class TestDeployHackfest3Charmed(TestDeploy):
             input('NS service primitive has been executed. Check that file /home/ubuntu/OSMTESTNBI is present at '
                   'TODO_PUT_IP')
         if test_osm:
-            cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/OSMTESTNBI', ]}
-            uss = {'1': "ubuntu", '2': "ubuntu"}
-            pss = {'1': "osm4u", '2': "osm4u"}
-            self.test_ns(engine, test_osm, cmds, uss, pss, self.keys, self.timeout)
+            commands = {'1': [''], '2': ['ls -lrt /home/ubuntu/OSMTESTNBI', ]}
+            self.test_ns(engine, test_osm, commands=commands)
 
         # # 2 perform scale out
         # payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
@@ -1287,65 +1272,13 @@ class TestDeployHackfest3Charmed(TestDeploy):
         # # TODO check automatic
 
 
-class TestDeploySimpleCharm(TestDeploy):
-    description = "Deploy hackfest-4 hackfest_simplecharm example"
-
-    def __init__(self):
-        super().__init__()
-        self.test_name = "HACKFEST-SIMPLE"
-        self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-4.0-four/4th-hackfest/packages/"
-        self.vnfd_filenames = ("hackfest_simplecharm_vnf.tar.gz",)
-        self.nsd_filename = "hackfest_simplecharm_ns.tar.gz"
-        self.uses_configuration = True
-        self.cmds = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
-        self.uss = {'1': "ubuntu", '2': "ubuntu"}
-        self.pss = {'1': "osm4u", '2': "osm4u"}
-
-
-class TestDeploySimpleCharm2(TestDeploySimpleCharm):
-    description = "Deploy hackfest-4 hackfest_simplecharm example changing naming to contain dots on ids and " \
-                  "vnf-member-index"
-
-    def __init__(self):
-        super().__init__()
-        self.test_name = "HACKFEST-SIMPLE2-"
-        self.qforce = "?FORCE=True"
-        self.descriptor_edit = {
-            "vnfd0": {
-                "id": "hackfest.simplecharm.vnf"
-            },
-
-            "nsd": {
-                "id": "hackfest.simplecharm.ns",
-                "constituent-vnfd": {
-                    "$[0]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$1"},
-                    "$[1]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$2"},
-                },
-                "vld": {
-                    "$[0]": {
-                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
-                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
-                                                      "$[1]": {"member-vnf-index-ref": "$2",
-                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
-                    },
-                    "$[1]": {
-                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
-                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
-                                                      "$[1]": {"member-vnf-index-ref": "$2",
-                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
-                    },
-                }
-            }
-        }
-
-
 class TestDeployHackfest3Charmed2(TestDeployHackfest3Charmed):
     description = "Load and deploy Hackfest 3charmed_ns example modified version of descriptors to have dots in " \
-                  "ids and member-vnf-index"
+                  "ids and member-vnf-index."
 
     def __init__(self):
         super().__init__()
-        self.test_name = "HACKFEST3bis"
+        self.test_name = "HACKFEST3v2-"
         self.qforce = "?FORCE=True"
         self.descriptor_edit = {
             "vnfd0": {
@@ -1403,6 +1336,159 @@ class TestDeployHackfest3Charmed2(TestDeployHackfest3Charmed):
                         "type": "ELAN"
                     },
                     "$[1]": None,
+                }
+            }
+        }
+
+
+class TestDeployHackfest3Charmed3(TestDeployHackfest3Charmed):
+    description = "Load and deploy Hackfest 3charmed_ns example modified version to test scaling and NS parameters"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST3v3-"
+        self.commands = {'1': ['ls -lrt /home/ubuntu/first-touch-1'], '2': ['ls -lrt /home/ubuntu/first-touch-1']}
+        self.descriptor_edit = {
+            "vnfd0": yaml.load(
+                """
+                scaling-group-descriptor:
+                    -   name: "scale_dataVM"
+                        max-instance-count: 10
+                        scaling-policy:
+                        -   name: "auto_cpu_util_above_threshold"
+                            scaling-type: "automatic"
+                            threshold-time: 0
+                            cooldown-time: 60
+                            scaling-criteria:
+                            -   name: "cpu_util_above_threshold"
+                                scale-in-threshold: 15
+                                scale-in-relational-operation: "LE"
+                                scale-out-threshold: 60
+                                scale-out-relational-operation: "GE"
+                                vnf-monitoring-param-ref: "monitor1"
+                        vdu:
+                        -   vdu-id-ref: dataVM
+                            count: 1
+                        scaling-config-action:
+                        -   trigger: post-scale-out
+                            vnf-config-primitive-name-ref: touch
+                        -   trigger: pre-scale-in
+                            vnf-config-primitive-name-ref: touch
+                vdu:
+                    "$id: dataVM":
+                        monitoring-param:
+                        -   id: "dataVM_cpu_util"
+                            nfvi-metric: "cpu_utilization"
+
+                monitoring-param:
+                -   id: "monitor1"
+                    name: "monitor1"
+                    aggregation-type: AVERAGE
+                    vdu-monitoring-param:
+                      vdu-ref: "dataVM"
+                      vdu-monitoring-param-ref: "dataVM_cpu_util"
+                vnf-configuration:
+                    initial-config-primitive:
+                        "$[1]":
+                            parameter:
+                                "$[0]":
+                                    value: "<touch-filename>"   # default-value: /home/ubuntu/first-touch
+                    # config-primitive:
+                    #     "$[0]":
+                    #         parameter:
+                    #             "$[0]":
+                    #                 default-value: "<touch-filename2>"
+                """)
+        }
+        self.ns_params = {
+            "additionalParamsForVnf": [
+                {"member-vnf-index": "1", "additionalParams": {"touch-filename": "/home/ubuntu/first-touch-1",
+                                                               "touch-filename2": "/home/ubuntu/second-touch-2"}},
+                {"member-vnf-index": "2", "additionalParams": {"touch-filename": "/home/ubuntu/first-touch-1",
+                                                               "touch-filename2": "/home/ubuntu/second-touch-2"}},
+            ]
+        }
+
+    def additional_operations(self, engine, test_osm, manual_check):
+        super().additional_operations(engine, test_osm, manual_check)
+        if not test_osm:
+            return
+
+        # 2 perform scale out
+        payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_OUT, scaleByStepData: ' \
+                  '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
+        engine.test("Execute scale action over NS", "POST",
+                    "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
+                    201, r_headers_yaml_location_nslcmop, "yaml")
+        nslcmop2_scale_out = engine.last_id
+        engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
+        if manual_check:
+            input('NS scale out done. Check that file /home/ubuntu/touched is present and new VM is created')
+        if test_osm:
+            commands = {'1': ['ls -lrt /home/ubuntu/touched', ]}
+            self.test_ns(engine, test_osm, commands=commands)
+            # TODO check automatic connection to scaled VM
+
+        # 2 perform scale in
+        payload = '{scaleType: SCALE_VNF, scaleVnfData: {scaleVnfType: SCALE_IN, scaleByStepData: ' \
+                  '{scaling-group-descriptor: scale_dataVM, member-vnf-index: "1"}}}'
+        engine.test("Execute scale action over NS", "POST",
+                    "/nslcm/v1/ns_instances/{}/scale".format(self.ns_id), headers_yaml, payload,
+                    201, r_headers_yaml_location_nslcmop, "yaml")
+        nslcmop2_scale_in = engine.last_id
+        engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
+        if manual_check:
+            input('NS scale in done. Check that file /home/ubuntu/touched is updated and new VM is deleted')
+        # TODO check automatic
+
+
+class TestDeploySimpleCharm(TestDeploy):
+    description = "Deploy hackfest-4 hackfest_simplecharm example"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST-SIMPLE"
+        self.descriptor_url = "https://osm-download.etsi.org/ftp/osm-4.0-four/4th-hackfest/packages/"
+        self.vnfd_filenames = ("hackfest_simplecharm_vnf.tar.gz",)
+        self.nsd_filename = "hackfest_simplecharm_ns.tar.gz"
+        self.uses_configuration = True
+        self.commands = {'1': [''], '2': ['ls -lrt /home/ubuntu/first-touch', ]}
+        self.users = {'1': "ubuntu", '2': "ubuntu"}
+        self.passwords = {'1': "osm4u", '2': "osm4u"}
+
+
+class TestDeploySimpleCharm2(TestDeploySimpleCharm):
+    description = "Deploy hackfest-4 hackfest_simplecharm example changing naming to contain dots on ids and " \
+                  "vnf-member-index"
+
+    def __init__(self):
+        super().__init__()
+        self.test_name = "HACKFEST-SIMPLE2-"
+        self.qforce = "?FORCE=True"
+        self.descriptor_edit = {
+            "vnfd0": {
+                "id": "hackfest.simplecharm.vnf"
+            },
+
+            "nsd": {
+                "id": "hackfest.simplecharm.ns",
+                "constituent-vnfd": {
+                    "$[0]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$1"},
+                    "$[1]": {"vnfd-id-ref": "hackfest.simplecharm.vnf", "member-vnf-index": "$2"},
+                },
+                "vld": {
+                    "$[0]": {
+                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
+                                                      "$[1]": {"member-vnf-index-ref": "$2",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
+                    },
+                    "$[1]": {
+                        "vnfd-connection-point-ref": {"$[0]": {"member-vnf-index-ref": "$1",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"},
+                                                      "$[1]": {"member-vnf-index-ref": "$2",
+                                                               "vnfd-id-ref": "hackfest.simplecharm.vnf"}},
+                    },
                 }
             }
         }
@@ -1585,8 +1671,7 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
         if manual_check:
             input('VNF to be used as PDU has been deployed. Perform manual check and press enter to resume')
         if test_osm:
-            self.pduDeploy.test_ns(engine, test_osm, self.pduDeploy.cmds, self.pduDeploy.uss, self.pduDeploy.pss,
-                                   self.pduDeploy.keys, self.pduDeploy.timeout)
+            self.pduDeploy.test_ns(engine, test_osm)
 
         if test_osm:
             r = engine.test("Get VNFR to obtain IP_ADDRESS", "GET",
@@ -1623,8 +1708,8 @@ class TestDeployHnfd(TestDeployHackfest3Charmed):
         if manual_check:
             input('NS has been deployed. Perform manual check and press enter to resume')
         if test_osm:
-            self.test_ns(engine, test_osm, self.cmds, self.uss, self.pss, self.keys, self.timeout)
-        self.aditional_operations(engine, test_osm, manual_check)
+            self.test_ns(engine, test_osm)
+        self.additional_operations(engine, test_osm, manual_check)
         self.terminate(engine)
         self.pduDeploy.terminate(engine)
         self.delete_descriptors(engine)
@@ -1866,6 +1951,8 @@ if __name__ == "__main__":
             "Deploy-Hackfest-Cirros": TestDeployHackfestCirros,
             "Deploy-Hackfest-Cirros-Scaling": TestDeployHackfestCirrosScaling,
             "Deploy-Hackfest-3Charmed": TestDeployHackfest3Charmed,
+            "Deploy-Hackfest-3Charmed2": TestDeployHackfest3Charmed2,
+            "Deploy-Hackfest-3Charmed3": TestDeployHackfest3Charmed3,
             "Deploy-Hackfest-4": TestDeployHackfest4,
             "Deploy-CirrosMacIp": TestDeployIpMac,
             "TestDescriptors": TestDescriptors,
@@ -1887,8 +1974,8 @@ if __name__ == "__main__":
                 print("test version " + __version__ + ' ' + version_date)
                 exit()
             elif o == "--list":
-                for test, test_class in test_classes.items():
-                    print("{:20} {}".format(test + ":", test_class.description))
+                for test, test_class in sorted(test_classes.items()):
+                    print("{:32} {}".format(test + ":", test_class.description))
                 exit()
             elif o in ("-v", "--verbose"):
                 verbose += 1

@@ -259,6 +259,7 @@ class Engine(object):
                 }
                 self.db.create("admin", version_data)
                 self.db.set_secret_key(serial)
+                return
             # TODO add future migrations here
 
         raise EngineException("Wrong database version '{}'. Expected '{}'"

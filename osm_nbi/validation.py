@@ -213,6 +213,18 @@ ns_instantiate = {
         "nsDescription": {"oneOf": [description_schema, {"type": "null"}]},
         "nsdId": id_schema,
         "vimAccountId": id_schema,
+        "additionalParamsForNs": object_schema,
+        "additionalParamsForVnf": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "member-vnf-index": name_schema,
+                    "additionalParams": object_schema,
+                },
+                "required": ["member-vnf-index", "additionalParams"]
+            }
+        },
         "ssh_keys": {"type": "array", "items": {"type": "string"}},
         "nsr_id": id_schema,
         "vduImage": name_schema,
