@@ -178,6 +178,7 @@ ns_instantiate_internal_vld = {
     "properties": {
         "name": name_schema,
         "vim-network-name": name_schema,
+        "vim-network-id": name_schema,
         "ip-profile": ip_profile_update_schema,
         "internal-connection-point": {
             "type": "array",
@@ -247,6 +248,7 @@ ns_instantiate = {
                 "properties": {
                     "name": string_schema,
                     "vim-network-name": {"OneOf": [string_schema, object_schema]},
+                    "vim-network-id": {"OneOf": [string_schema, object_schema]},
                     "ip-profile": object_schema,
                     "vnfd-connection-point-ref": {
                         "type": "array",
@@ -482,7 +484,7 @@ pdu_interface = {
         # TODO, add user, password, ssh-key
         "mac-address": mac_schema,
         "vim-network-name": nameshort_schema,  # interface is connected to one vim network, or switch port
-        # TODO "vim-network-id": nameshort_schema,
+        "vim-network-id": nameshort_schema,
         # # provide this in case SDN assist must deal with this interface
         # "switch-dpid": dpid_Schema,
         # "switch-port": nameshort_schema,
@@ -624,6 +626,7 @@ nsi_vld_instantiate = {
     "properties": {
         "name": string_schema,
         "vim-network-name": {"OneOf": [string_schema, object_schema]},
+        "vim-network-id": {"OneOf": [string_schema, object_schema]},
         "ip-profile": object_schema,
     },
     "required": ["name"], 

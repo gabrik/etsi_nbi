@@ -147,7 +147,7 @@ class NsrTopic(BaseTopic):
                 nsr_descriptor["vld"] = []
                 for nsd_vld in nsd.get("vld"):
                     nsr_descriptor["vld"].append(
-                        {key: nsd_vld[key] for key in ("id", "vim-network-name") if key in nsd_vld})
+                        {key: nsd_vld[key] for key in ("id", "vim-network-name", "vim-network-id") if key in nsd_vld})
 
             # Create VNFR
             needed_vnfds = {}
@@ -185,7 +185,8 @@ class NsrTopic(BaseTopic):
                     vnfr_descriptor["vld"] = []
                     for vnfd_vld in vnfd.get("internal-vld"):
                         vnfr_descriptor["vld"].append(
-                            {key: vnfd_vld[key] for key in ("id", "vim-network-name") if key in vnfd_vld})
+                            {key: vnfd_vld[key] for key in ("id", "vim-network-name", "vim-network-id") if key in
+                             vnfd_vld})
 
                 vnfd_mgmt_cp = vnfd["mgmt-interface"].get("cp")
                 for cp in vnfd.get("connection-point", ()):
@@ -541,13 +542,17 @@ class NsLcmOpTopic(BaseTopic):
                             if vdur_interface.get("mgmt-vnf"):
                                 vnfr_update_rollback["ip-address"] = vnfr.get("ip-address")
                                 vnfr_update["ip-address"] = pdu_interface["ip-address"]
-                        if pdu_interface.get("vim-network-name"):  # or pdu_interface.get("vim-network-id"):
+                        if pdu_interface.get("vim-network-name") or pdu_interface.get("vim-network-id"):
                             ifaces_forcing_vim_network.append({
-                                # "vim-network-id": pdu_interface.get("vim-network-id"),
-                                "vim-network-name": pdu_interface.get("vim-network-name"),
                                 "name": vdur_interface.get("vnf-vld-id") or vdur_interface.get("ns-vld-id"),
                                 "vnf-vld-id": vdur_interface.get("vnf-vld-id"),
                                 "ns-vld-id": vdur_interface.get("ns-vld-id")})
+                            if pdu_interface.get("vim-network-id"):
+                                ifaces_forcing_vim_network.append({
+                                    "vim-network-id": pdu_interface.get("vim-network-id")})
+                            if pdu_interface.get("vim-network-name"):
+                                ifaces_forcing_vim_network.append({
+                                    "vim-network-name": pdu_interface.get("vim-network-name")})
                         break
 
         return ifaces_forcing_vim_network
@@ -844,8 +849,11 @@ class NsiTopic(BaseTopic):
                     # Adding vim-network-name defined by the user to vld
                     if instantiation_parameters.get("netslice-vld"):
                         for ins_param in instantiation_parameters["netslice-vld"]:
-                            if ins_param["name"] == netslice_vlds["name"] and ins_param.get("vim-network-name"):
+                            if ins_param["name"] == netslice_vlds["name"]:
+                                if ins_param.get("vim-network-name"):
                                     nsi_vld["vim-network-name"] = ins_param.get("vim-network-name")
+                                if ins_param.get("vim-network-id"):
+                                    nsi_vld["vim-network-id"] = ins_param.get("vim-network-id")
                     nsi_vlds.append(nsi_vld)
 
             nsi_descriptor["_admin"]["netslice-vld"] = nsi_vlds
