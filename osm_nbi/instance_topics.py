@@ -517,10 +517,10 @@ class NsLcmOpTopic(BaseTopic):
             }
             self.db.set_one("pdus", {"_id": pdu["_id"]},
                             {"_admin.usageState": "IN_USE",
-                             "_admin.usage.vnfr_id": vnfr["_id"],
-                             "_admin.usage.nsr_id": vnfr["nsr-id-ref"],
-                             "_admin.usage.vdur": vdur["vdu-id-ref"]}
-                            )
+                             "_admin.usage": {"vnfr_id": vnfr["_id"],
+                                              "nsr_id": vnfr["nsr-id-ref"],
+                                              "vdur": vdur["vdu-id-ref"]}
+                             })
             rollback.append({"topic": "pdus", "_id": pdu["_id"], "operation": "set", "content": rollback_pdu})
 
             # step 3. Fill vnfr info by filling vdur
@@ -668,7 +668,7 @@ class NsLcmOpTopic(BaseTopic):
             if not nsr["_admin"].get("nsState") or nsr["_admin"]["nsState"] == "NOT_INSTANTIATED":
                 if operation == "terminate" and indata.get("autoremove"):
                     # NSR must be deleted
-                    return self.delete(session, nsInstanceId)
+                    return None    # a none in this case is used to indicate not instantiated. It can be removed
                 if operation != "instantiate":
                     raise EngineException("ns_instance '{}' cannot be '{}' because it is not instantiated".format(
                         nsInstanceId, operation), HTTPStatus.CONFLICT)
@@ -1037,7 +1037,7 @@ class NsiLcmOpTopic(BaseTopic):
             if not nsir["_admin"].get("nsiState") or nsir["_admin"]["nsiState"] == "NOT_INSTANTIATED":
                 if operation == "terminate" and indata.get("autoremove"):
                     # NSIR must be deleted
-                    return self.delete(session, nsiInstanceId)
+                    return None    # a none in this case is used to indicate not instantiated. It can be removed
                 if operation != "instantiate":
                     raise EngineException("netslice_instance '{}' cannot be '{}' because it is not instantiated".format(
                         nsiInstanceId, operation), HTTPStatus.CONFLICT)
