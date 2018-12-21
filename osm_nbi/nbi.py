@@ -815,6 +815,7 @@ class Server(object):
                     outdata = self.engine.del_item_list(session, engine_topic, kwargs)
                     cherrypy.response.status = HTTPStatus.OK.value
                 else:  # len(args) > 1
+                    delete_in_process = False
                     if topic == "ns_instances_content" and not force:
                         nslcmop_desc = {
                             "lcmOperationType": "terminate",
@@ -822,8 +823,10 @@ class Server(object):
                             "autoremove": True
                         }
                         opp_id = self.engine.new_item(rollback, session, "nslcmops", nslcmop_desc, None)
-                        outdata = {"_id": opp_id}
-                        cherrypy.response.status = HTTPStatus.ACCEPTED.value
+                        if opp_id:
+                            delete_in_process = True
+                            outdata = {"_id": opp_id}
+                            cherrypy.response.status = HTTPStatus.ACCEPTED.value
                     elif topic == "netslice_instances_content" and not force:
                         nsilcmop_desc = {
                             "lcmOperationType": "terminate",
@@ -831,9 +834,11 @@ class Server(object):
                             "autoremove": True
                         }
                         opp_id = self.engine.new_item(rollback, session, "nsilcmops", nsilcmop_desc, None)
-                        outdata = {"_id": opp_id}
-                        cherrypy.response.status = HTTPStatus.ACCEPTED.value
-                    else:
+                        if opp_id:
+                            delete_in_process = True
+                            outdata = {"_id": opp_id}
+                            cherrypy.response.status = HTTPStatus.ACCEPTED.value
+                    if not delete_in_process:
                         self.engine.del_item(session, engine_topic, _id, force)
                         cherrypy.response.status = HTTPStatus.NO_CONTENT.value
                 if engine_topic in ("vim_accounts", "wim_accounts", "sdns"):
@@ -875,7 +880,8 @@ class Server(object):
                         self.engine.db.set_one(rollback_item["topic"], {"_id": rollback_item["_id"]},
                                                rollback_item["content"], fail_on_empty=False)
                     else:
-                        self.engine.del_item(**rollback_item, session=session, force=True)
+                        self.engine.db.del_one(rollback_item["topic"], {"_id": rollback_item["_id"]},
+                                               fail_on_empty=False)
                 except Exception as e2:
                     rollback_error_text = "Rollback Exception {}: {}".format(rollback_item, e2)
                     cherrypy.log(rollback_error_text)
