@@ -25,6 +25,7 @@ from descriptor_topics import VnfdTopic, NsdTopic, PduTopic, NstTopic
 from instance_topics import NsrTopic, VnfrTopic, NsLcmOpTopic, NsiTopic, NsiLcmOpTopic
 from base64 import b64encode
 from os import urandom
+from threading import Lock
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 min_common_version = "0.1.8"
@@ -56,6 +57,7 @@ class Engine(object):
         self.config = None
         self.logger = logging.getLogger("nbi.engine")
         self.map_topic = {}
+        self.write_lock = None
 
     def start(self, config):
         """
@@ -98,6 +100,7 @@ class Engine(object):
                     raise EngineException("Invalid configuration param '{}' at '[message]':'driver'".format(
                         config["storage"]["driver"]))
 
+            self.write_lock = Lock()
             # create one class per topic
             for topic, topic_class in self.map_from_topic_to_class.items():
                 self.map_topic[topic] = topic_class(self.db, self.fs, self.msg)
@@ -112,6 +115,7 @@ class Engine(object):
                 self.fs.fs_disconnect()
             if self.fs:
                 self.fs.fs_disconnect()
+            self.write_lock = None
         except (DbException, FsException, MsgException) as e:
             raise EngineException(str(e), http_code=e.http_code)
 
@@ -130,7 +134,8 @@ class Engine(object):
         """
         if topic not in self.map_topic:
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
-        return self.map_topic[topic].new(rollback, session, indata, kwargs, headers, force)
+        with self.write_lock:
+            return self.map_topic[topic].new(rollback, session, indata, kwargs, headers, force)
 
     def upload_content(self, session, topic, _id, indata, kwargs, headers, force=False):
         """
@@ -146,7 +151,8 @@ class Engine(object):
         """
         if topic not in self.map_topic:
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
-        return self.map_topic[topic].upload_content(session, _id, indata, kwargs, headers, force)
+        with self.write_lock:
+            return self.map_topic[topic].upload_content(session, _id, indata, kwargs, headers, force)
 
     def get_item_list(self, session, topic, filter_q=None):
         """
@@ -196,7 +202,8 @@ class Engine(object):
         """
         if topic not in self.map_topic:
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
-        return self.map_topic[topic].delete_list(session, _filter)
+        with self.write_lock:
+            return self.map_topic[topic].delete_list(session, _filter)
 
     def del_item(self, session, topic, _id, force=False):
         """
@@ -209,7 +216,8 @@ class Engine(object):
         """
         if topic not in self.map_topic:
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
-        return self.map_topic[topic].delete(session, _id, force)
+        with self.write_lock:
+            return self.map_topic[topic].delete(session, _id, force)
 
     def edit_item(self, session, topic, _id, indata=None, kwargs=None, force=False):
         """
@@ -224,7 +232,8 @@ class Engine(object):
         """
         if topic not in self.map_topic:
             raise EngineException("Unknown topic {}!!!".format(topic), HTTPStatus.INTERNAL_SERVER_ERROR)
-        return self.map_topic[topic].edit(session, _id, indata, kwargs, force)
+        with self.write_lock:
+            return self.map_topic[topic].edit(session, _id, indata, kwargs, force)
 
     def create_admin(self):
         """
