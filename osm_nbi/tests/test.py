@@ -1791,6 +1791,14 @@ class TestDescriptors:
                     "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id), headers_zip_yaml,
                     "@b" + vnfd_filename_path, 204, None, 0)
 
+        queries = ["mgmt-interface.cp=mgmt", "vdu.0.interface.0.external-connection-point-ref=mgmt",
+                   "vdu.0.interface.1.internal-connection-point-ref=internal",
+                   "internal-vld.0.internal-connection-point.0.id-ref=internal"]
+        for query in queries:
+            engine.test("Upload invalid VNFD ", "PUT",
+                        "/vnfpkgm/v1/vnf_packages/{}/package_content?{}".format(self.vnfd_id, query),
+                        headers_zip_yaml, "@b" + vnfd_filename_path, 422, r_header_yaml, "yaml")
+
         # test bug 605
         engine.test("Upload invalid VNFD ", "PUT", "/vnfpkgm/v1/vnf_packages/{}/package_content".format(self.vnfd_id),
                     headers_yaml, self.vnfd_prova, 422, r_header_yaml, "yaml")
@@ -1820,6 +1828,12 @@ class TestDescriptors:
         engine.test("Onboard NSD in one step", "POST", "/nsd/v1/ns_descriptors_content", headers_zip_yaml,
                     "@b" + nsd_filename_path, 201, r_headers_yaml_location_nsd, "yaml")
         self.nsd_id = engine.last_id
+
+        queries = ["vld.0.vnfd-connection-point-ref.0.vnfd-id-ref=hf"]
+        for query in queries:
+            engine.test("Upload invalid NSD ", "PUT",
+                        "/nsd/v1/ns_descriptors/{}/nsd_content?{}".format(self.nsd_id, query),
+                        headers_zip_yaml, "@b" + nsd_filename_path, 422, r_header_yaml, "yaml")
 
         # get nsd descriptor
         engine.test("Get NSD descriptor", "GET", "/nsd/v1/ns_descriptors/{}".format(self.nsd_id), headers_yaml,
