@@ -772,6 +772,25 @@ class NsiTopic(BaseTopic):
     def __init__(self, db, fs, msg):
         BaseTopic.__init__(self, db, fs, msg)
 
+    @staticmethod
+    def _format_ns_request(ns_request):
+        formated_request = copy(ns_request)
+        # TODO: Add request params
+        return formated_request
+
+    @staticmethod
+    def _format_addional_params(ns_request, member_vnf_index=None, descriptor=None):
+        """
+        Get and format user additional params for NS or VNF
+        :param ns_request: User instantiation additional parameters
+        :param member_vnf_index: None for extract NS params, or member_vnf_index to extract VNF params
+        :param descriptor: If not None it check that needed parameters of descriptor are supplied
+        :return: a formated copy of additional params or None if not supplied
+        """
+        additional_params = None
+        # TODO: Check aditional params
+        return additional_params
+
     def _check_descriptor_dependencies(self, session, descriptor):
         """
         Check that the dependent descriptors exist on a new descriptor or edition
@@ -911,7 +930,7 @@ class NsiTopic(BaseTopic):
                                     if ins_param.get("id") == netslice_vld["nss-ref"]:
                                         if ins_param.get("vimAccountId"):
                                             nsi_vld["vimAccountId"] = ins_param["vimAccountId"]
-                    # Adding vim-network-name defined by the user to vld
+                    # Adding vim-network-name / vim-network-id defined by the user to vld
                     if instantiation_parameters.get("netslice-vld"):
                         for ins_param in instantiation_parameters["netslice-vld"]:
                             if ins_param["name"] == netslice_vlds["name"]:
@@ -919,6 +938,8 @@ class NsiTopic(BaseTopic):
                                     nsi_vld["vim-network-name"] = ins_param.get("vim-network-name")
                                 if ins_param.get("vim-network-id"):
                                     nsi_vld["vim-network-id"] = ins_param.get("vim-network-id")
+                    if netslice_vlds.get("mgmt-network"):
+                        nsi_vld["mgmt-network"] = netslice_vlds.get("mgmt-network")
                     nsi_vlds.append(nsi_vld)
 
             nsi_descriptor["_admin"]["netslice-vld"] = nsi_vlds
@@ -969,26 +990,39 @@ class NsiTopic(BaseTopic):
                             del copy_ns_param["id"]
                             indata_ns.update(copy_ns_param)
                 # TODO: Improve network selection via networkID
+                # Override the instantiation parameters for netslice-vld provided by user
                 if nsi_vlds:
                     indata_ns_list = []
                     for nsi_vld in nsi_vlds:
                         nsd = self.db.get_one("nsds", {"id": nsi_vld["nsd-ref"]})
                         if nsd["connection-point"]:
-                            for vld_id_ref in nsd["connection-point"]:
-                                name = vld_id_ref["vld-id-ref"]
-                                vnm = nsi_vld.get("vim-network-name")
-                                if type(vnm) is not dict:
-                                    vnm = {slice_request.get("vimAccountId"): vnm}
-                                if vld_id_ref["name"] == nsi_vld["nsd-connection-point-ref"]:
-                                    if list(vnm.values())[0] is None:
-                                        networkName = "default"
+                            for cp_item in nsd["connection-point"]:
+                                if cp_item["name"] == nsi_vld["nsd-connection-point-ref"]:
+                                    vld_id_ref = cp_item["vld-id-ref"]
+                                    # Mapping the vim-network-name or vim-network-id instantiation parameters
+                                    if nsi_vld.get("vim-network-id"):
+                                        vnid = nsi_vld.get("vim-network-id")
+                                        if type(vnid) is not dict:
+                                            vim_network_id = {slice_request.get("vimAccountId"): vnid}
+                                        else:  # is string
+                                            vim_network_id = vnid
+                                        indata_ns_list.append({"name": vld_id_ref, "vim-network-id": vim_network_id})
+                                    # Case not vim-network-name instantiation parameter
+                                    elif nsi_vld.get("vim-network-name"):
+                                        vnm = nsi_vld.get("vim-network-name")
+                                        if type(vnm) is not dict:
+                                            vim_network_name = {slice_request.get("vimAccountId"): vnm}
+                                        else:  # is string
+                                            vim_network_name = vnm
+                                        indata_ns_list.append({"name": vld_id_ref,
+                                                              "vim-network-name": vim_network_name})
+                                    # Case neither vim-network-name nor vim-network-id provided
                                     else:
-                                        networkName = str(list(vnm.values())[0])
-                                    # VIMNetworkName = NetSliceName-NetworkName
-                                    vimnetname = str(slice_request["nsiName"]) + "-" + networkName
-                                    indata_ns_list.append({"name": name, "vim-network-name": vimnetname})
-                    indata_ns["vld"] = indata_ns_list
-                            
+                                        indata_ns_list.append({"name": vld_id_ref})
+                    if indata_ns_list:
+                        indata_ns["vld"] = indata_ns_list
+
+                # Creates Nsr objects
                 _id_nsr = NsrTopic.new(self, rollback, session, indata_ns, kwargs, headers, force)
                 nsrs_item = {"nsrId": _id_nsr}
                 nsrs_list.append(nsrs_item)
