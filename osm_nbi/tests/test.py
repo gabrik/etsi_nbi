@@ -1347,7 +1347,7 @@ class TestDeployHackfest3Charmed3(TestDeployHackfest3Charmed):
     def __init__(self):
         super().__init__()
         self.test_name = "HACKFEST3v3-"
-        self.commands = {'1': ['ls -lrt /home/ubuntu/first-touch-1'], '2': ['ls -lrt /home/ubuntu/first-touch-1']}
+        self.commands = {'1': ['ls -lrt /home/ubuntu/first-touch-1'], '2': ['ls -lrt /home/ubuntu/first-touch-2']}
         self.descriptor_edit = {
             "vnfd0": yaml.load(
                 """
@@ -1393,18 +1393,18 @@ class TestDeployHackfest3Charmed3(TestDeployHackfest3Charmed):
                             parameter:
                                 "$[0]":
                                     value: "<touch-filename>"   # default-value: /home/ubuntu/first-touch
-                    # config-primitive:
-                    #     "$[0]":
-                    #         parameter:
-                    #             "$[0]":
-                    #                 default-value: "<touch-filename2>"
+                    config-primitive:
+                        "$[0]":
+                            parameter:
+                                "$[0]":
+                                    default-value: "<touch-filename2>"
                 """)
         }
         self.ns_params = {
             "additionalParamsForVnf": [
                 {"member-vnf-index": "1", "additionalParams": {"touch-filename": "/home/ubuntu/first-touch-1",
-                                                               "touch-filename2": "/home/ubuntu/second-touch-2"}},
-                {"member-vnf-index": "2", "additionalParams": {"touch-filename": "/home/ubuntu/first-touch-1",
+                                                               "touch-filename2": "/home/ubuntu/second-touch-1"}},
+                {"member-vnf-index": "2", "additionalParams": {"touch-filename": "/home/ubuntu/first-touch-2",
                                                                "touch-filename2": "/home/ubuntu/second-touch-2"}},
             ]
         }
@@ -1423,9 +1423,9 @@ class TestDeployHackfest3Charmed3(TestDeployHackfest3Charmed):
         nslcmop2_scale_out = engine.last_id
         engine.wait_operation_ready("ns", nslcmop2_scale_out, timeout_deploy)
         if manual_check:
-            input('NS scale out done. Check that file /home/ubuntu/touched is present and new VM is created')
+            input('NS scale out done. Check that file /home/ubuntu/second-touch-1 is present and new VM is created')
         if test_osm:
-            commands = {'1': ['ls -lrt /home/ubuntu/touched', ]}
+            commands = {'1': ['ls -lrt /home/ubuntu/second-touch-1', ]}
             self.test_ns(engine, test_osm, commands=commands)
             # TODO check automatic connection to scaled VM
 
@@ -1438,7 +1438,7 @@ class TestDeployHackfest3Charmed3(TestDeployHackfest3Charmed):
         nslcmop2_scale_in = engine.last_id
         engine.wait_operation_ready("ns", nslcmop2_scale_in, timeout_deploy)
         if manual_check:
-            input('NS scale in done. Check that file /home/ubuntu/touched is updated and new VM is deleted')
+            input('NS scale in done. Check that file /home/ubuntu/second-touch-1 is updated and new VM is deleted')
         # TODO check automatic
 
 
