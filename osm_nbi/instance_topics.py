@@ -771,6 +771,7 @@ class NsiTopic(BaseTopic):
 
     def __init__(self, db, fs, msg):
         BaseTopic.__init__(self, db, fs, msg)
+        self.nsrTopic = NsrTopic(db, fs, msg)
 
     @staticmethod
     def _format_ns_request(ns_request):
@@ -779,16 +780,23 @@ class NsiTopic(BaseTopic):
         return formated_request
 
     @staticmethod
-    def _format_addional_params(ns_request, member_vnf_index=None, descriptor=None):
+    def _format_addional_params(slice_request):
         """
         Get and format user additional params for NS or VNF
-        :param ns_request: User instantiation additional parameters
-        :param member_vnf_index: None for extract NS params, or member_vnf_index to extract VNF params
-        :param descriptor: If not None it check that needed parameters of descriptor are supplied
-        :return: a formated copy of additional params or None if not supplied
+        :param slice_request: User instantiation additional parameters
+        :return: a formatted copy of additional params or None if not supplied
         """
-        additional_params = None
-        # TODO: Check aditional params
+        additional_params = copy(slice_request.get("additionalParamsForNsi"))
+        if additional_params:
+            for k, v in additional_params.items():
+                if not isinstance(k, str):
+                    raise EngineException("Invalid param at additionalParamsForNsi:{}. Only string keys are allowed".
+                                          format(k))
+                if "." in k or "$" in k:
+                    raise EngineException("Invalid param at additionalParamsForNsi:{}. Keys must not contain dots or $".
+                                          format(k))
+                if isinstance(v, (dict, tuple, list)):
+                    additional_params[k] = "!!yaml " + safe_dump(v)
         return additional_params
 
     def _check_descriptor_dependencies(self, session, descriptor):
@@ -846,7 +854,7 @@ class NsiTopic(BaseTopic):
             _filter = {"_id": id_item}
             nslcmop = self.db.get_one("nslcmops", _filter)
             nsr_id = nslcmop["operationParams"]["nsr_id"]
-            NsrTopic.delete(self, session, nsr_id, force=False, dry_run=False)
+            self.nsrTopic.delete(session, nsr_id, force=False, dry_run=False)
         self._send_msg("deleted", {"_id": _id})
         return v
 
@@ -892,6 +900,7 @@ class NsiTopic(BaseTopic):
                 "nsr-ref-list": [],
                 "vlr-list": [],
                 "_id": nsi_id,
+                "additionalParamsForNsi": self._format_addional_params(slice_request)
             }
 
             step = "creating nsi at database"
@@ -966,6 +975,16 @@ class NsiTopic(BaseTopic):
                 step = "filling nsir nsd-id='{}' constituent-nsd='{}' from database".format(
                     member_ns["nsd-ref"], member_ns["id"])
 
+            # check additionalParamsForSubnet contains a valid id
+            if slice_request.get("additionalParamsForSubnet"):
+                for additional_params_subnet in get_iterable(slice_request.get("additionalParamsForSubnet")):
+                    for service in services:
+                        if additional_params_subnet["id"] == service["id"]:
+                            break
+                    else:
+                        raise EngineException("Error at additionalParamsForSubnet:id='{}' not match any "
+                                              "netslice-subnet:id".format(additional_params_subnet["id"]))
+
             # creates Network Services records (NSRs)
             step = "creating nsrs at database using NsrTopic.new()"
             ns_params = slice_request.get("netslice-subnet")
@@ -979,6 +998,13 @@ class NsiTopic(BaseTopic):
                 indata_ns["vimAccountId"] = slice_request.get("vimAccountId")
                 indata_ns["nsDescription"] = service["description"]
                 indata_ns["key-pair-ref"] = None
+                for additional_params_subnet in get_iterable(slice_request.get("additionalParamsForSubnet")):
+                    if additional_params_subnet["id"] == service["id"]:
+                        if additional_params_subnet.get("additionalParamsForNs"):
+                            indata_ns["additionalParamsForNs"] = additional_params_subnet["additionalParamsForNs"]
+                        if additional_params_subnet.get("additionalParamsForVnf"):
+                            indata_ns["additionalParamsForVnf"] = additional_params_subnet["additionalParamsForVnf"]
+                        break
 
                 # NsrTopic(rollback, session, indata_ns, kwargs, headers, force)
                 # Overwriting ns_params filtering by nsName == netslice-subnet.id
@@ -1023,7 +1049,7 @@ class NsiTopic(BaseTopic):
                         indata_ns["vld"] = indata_ns_list
 
                 # Creates Nsr objects
-                _id_nsr = NsrTopic.new(self, rollback, session, indata_ns, kwargs, headers, force)
+                _id_nsr = self.nsrTopic.new(rollback, session, indata_ns, kwargs, headers, force)
                 nsrs_item = {"nsrId": _id_nsr}
                 nsrs_list.append(nsrs_item)
                 nsi_netslice_subnet.append(indata_ns)

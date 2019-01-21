@@ -27,7 +27,7 @@ Validator of input data using JSON schemas for those items that not contains an 
 
 # Basis schemas
 patern_name = "^[ -~]+$"
-nameshort_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\\.\\$'\"]+$"}
+shortname_schema = {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^,;()\\.\\$'\"]+$"}
 passwd_schema = {"type": "string", "minLength": 1, "maxLength": 60}
 name_schema = {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^,;()'\"]+$"}
 string_schema = {"type": "string", "minLength": 1, "maxLength": 255}
@@ -69,7 +69,7 @@ size_schema = {"type": "integer", "minimum": 1, "maximum": 100}
 array_edition_schema = {
     "type": "object",
     "patternProperties": {
-        "^\\$": "Any"
+        "^\\$": {}
     },
     "additionalProperties": False,
     "minProperties": 1,
@@ -77,7 +77,7 @@ array_edition_schema = {
 nameshort_list_schema = {
     "type": "array",
     "minItems": 1,
-    "items": nameshort_schema,
+    "items": shortname_schema,
 }
 
 
@@ -201,6 +201,20 @@ ns_instantiate_internal_vld = {
     "additionalProperties": False
 }
 
+additional_params_for_vnf = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "member-vnf-index": name_schema,
+            "additionalParams": object_schema,
+        },
+        "required": ["member-vnf-index", "additionalParams"],
+        "additionalProperties": False
+    }
+
+}
+
 ns_instantiate = {
     "title": "ns action instantiate input schema",
     "$schema": "http://json-schema.org/draft-04/schema#",
@@ -214,17 +228,7 @@ ns_instantiate = {
         "nsdId": id_schema,
         "vimAccountId": id_schema,
         "additionalParamsForNs": object_schema,
-        "additionalParamsForVnf": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "member-vnf-index": name_schema,
-                    "additionalParams": object_schema,
-                },
-                "required": ["member-vnf-index", "additionalParams"]
-            }
-        },
+        "additionalParamsForVnf": additional_params_for_vnf,
         "ssh_keys": {"type": "array", "items": {"type": "string"}},
         "nsr_id": id_schema,
         "vduImage": name_schema,
@@ -347,14 +351,14 @@ vim_account_edit_schema = {
     "properties": {
         "name": name_schema,
         "description": description_schema,
-        "type": nameshort_schema,
+        "type": shortname_schema,
         "vim": name_schema,
         "datacenter": name_schema,
         "vim_url": description_schema,
         "vim_url_admin": description_schema,
         "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
-        "vim_username": nameshort_schema,
+        "vim_username": shortname_schema,
         "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
@@ -377,7 +381,7 @@ vim_account_new_schema = {
         # "vim_url_admin": description_schema,
         # "vim_tenant": name_schema,
         "vim_tenant_name": name_schema,
-        "vim_user": nameshort_schema,
+        "vim_user": shortname_schema,
         "vim_password": passwd_schema,
         "config": {"type": "object"}
     },
@@ -392,10 +396,10 @@ wim_account_edit_schema = {
     "properties": {
         "name": name_schema,
         "description": description_schema,
-        "type": nameshort_schema,
+        "type": shortname_schema,
         "wim": name_schema,
         "wim_url": description_schema,
-        "user": nameshort_schema,
+        "user": shortname_schema,
         "password": passwd_schema,
         "config": {"type": "object"}
     },
@@ -414,7 +418,7 @@ wim_account_new_schema = {
         "wim": name_schema,
         "wim_type": {"enum": ["tapi", "onos", "odl", "dynpac"]},
         "wim_url": description_schema,
-        "user": nameshort_schema,
+        "user": shortname_schema,
         "password": passwd_schema,
         "config": {"type": "object"}
     },
@@ -430,7 +434,7 @@ sdn_properties = {
     "port": port_schema,
     "type": {"type": "string", "enum": ["opendaylight", "floodlight", "onos"]},
     "version": {"type": "string", "minLength": 1, "maxLength": 12},
-    "user": nameshort_schema,
+    "user": shortname_schema,
     "password": passwd_schema
 }
 sdn_new_schema = {
@@ -456,14 +460,14 @@ sdn_port_mapping_schema = {
     "items": {
         "type": "object",
         "properties": {
-            "compute_node": nameshort_schema,
+            "compute_node": shortname_schema,
             "ports": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "pci": pci_extended_schema,
-                        "switch_port": nameshort_schema,
+                        "switch_port": shortname_schema,
                         "switch_mac": mac_schema
                     },
                     "required": ["pci"]
@@ -489,18 +493,18 @@ sdn_external_port_schema = {
 pdu_interface = {
     "type": "object",
     "properties": {
-        "name": nameshort_schema,
+        "name": shortname_schema,
         "mgmt": bool_schema,
         "type": {"enum": ["overlay", 'underlay']},
         "ip-address": ip_schema,
         # TODO, add user, password, ssh-key
         "mac-address": mac_schema,
-        "vim-network-name": nameshort_schema,  # interface is connected to one vim network, or switch port
-        "vim-network-id": nameshort_schema,
+        "vim-network-name": shortname_schema,  # interface is connected to one vim network, or switch port
+        "vim-network-id": shortname_schema,
         # # provide this in case SDN assist must deal with this interface
         # "switch-dpid": dpid_Schema,
-        # "switch-port": nameshort_schema,
-        # "switch-mac": nameshort_schema,
+        # "switch-port": shortname_schema,
+        # "switch-mac": shortname_schema,
         # "switch-vlan": vlan_schema,
     },
     "required": ["name", "mgmt", "ip-address"],
@@ -511,8 +515,8 @@ pdu_new_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
-        "name": nameshort_schema,
-        "type": nameshort_schema,
+        "name": shortname_schema,
+        "type": shortname_schema,
         "description": description_schema,
         "shared": bool_schema,
         "vims": nameshort_list_schema,
@@ -532,8 +536,8 @@ pdu_edit_schema = {
     "$schema": "http://json-schema.org/draft-04/schema#",
     "type": "object",
     "properties": {
-        "name": nameshort_schema,
-        "type": nameshort_schema,
+        "name": shortname_schema,
+        "type": shortname_schema,
         "description": description_schema,
         "shared": bool_schema,
         "vims": {"oneOf": [array_edition_schema, nameshort_list_schema]},
@@ -557,7 +561,7 @@ user_new_schema = {
     "title": "New user schema",
     "type": "object",
     "properties": {
-        "username": nameshort_schema,
+        "username": shortname_schema,
         "password": passwd_schema,
         "projects": nameshort_list_schema,
     },
@@ -587,7 +591,7 @@ project_new_schema = {
     "title": "New project schema for administrators",
     "type": "object",
     "properties": {
-        "name": nameshort_schema,
+        "name": shortname_schema,
         "admin": bool_schema,
     },
     "required": ["name"],
@@ -629,7 +633,23 @@ nbi_edit_input_schemas = {
 nsi_slice_instantiate = deepcopy(ns_instantiate)
 nsi_slice_instantiate["title"] = "netslice subnet instantiation params input schema"
 nsi_slice_instantiate["properties"]["id"] = name_schema
+nsi_slice_instantiate["properties"]["additionalParamsForNsi"] = object_schema
+nsi_slice_instantiate["properties"]["additionalParamsForSubnet"] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "id": name_schema,
+            "additionalParamsForNs": object_schema,
+            "additionalParamsForVnf": additional_params_for_vnf
+        },
+        "required": ["id"],
+        "additionalProperties": False
+    }
+}
 del nsi_slice_instantiate["required"]
+del nsi_slice_instantiate["properties"]["additionalParamsForNs"]
+del nsi_slice_instantiate["properties"]["additionalParamsForVnf"]
 
 nsi_vld_instantiate = {
     "title": "netslice vld instantiation params input schema",
