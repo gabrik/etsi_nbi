@@ -37,9 +37,8 @@ from os import environ, path
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 
-# TODO consider to remove and provide version using the static version file
 __version__ = "0.1.3"
-version_date = "Apr 2018"
+version_date = "Jan 2019"
 database_version = '1.0'
 auth_database_version = '1.0'
 
@@ -898,13 +897,6 @@ class Server(object):
             # raise cherrypy.HTTPError(e.http_code.value, str(e))
 
 
-# def validate_password(realm, username, password):
-#     cherrypy.log("realm "+ str(realm))
-#     if username == "admin" and password == "admin":
-#         return True
-#     return False
-
-
 def _start_service():
     """
     Callback function called when cherrypy.engine starts
@@ -995,7 +987,14 @@ def _start_service():
     cherrypy.tree.apps['/osm'].root.authenticator.start(engine_config)
     cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
     cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
-    # getenv('OSMOPENMANO_TENANT', None)
+
+    # load and print version. Ignore possible errors, e.g. file not found
+    try:
+        with open("{}/version".format(engine_config["/static"]['tools.staticdir.dir'])) as version_file:
+            version_data = version_file.read()
+            cherrypy.log.error("Starting OSM NBI Version: {}".format(version_data.replace("\n", " ")))
+    except Exception:
+        pass
 
 
 def _stop_service():
