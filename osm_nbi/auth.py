@@ -1,12 +1,26 @@
 # -*- coding: utf-8 -*-
 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """
 Authenticator is responsible for authenticating the users,
 create the tokens unscoped and scoped, retrieve the role
 list inside the projects that they are inserted
 """
 
-__author__ = "Eduardo Sousa <esousa@whitestack.com>"
+__author__ = "Eduardo Sousa <esousa@whitestack.com>; Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
 __date__ = "$27-jul-2018 23:59:59$"
 
 import cherrypy
@@ -34,6 +48,8 @@ class Authenticator:
     RBAC model to manage permissions on operations.
     """
 
+    periodin_db_pruning = 60*30  # for the internal backend only. every 30 minutes expired tokens will be pruned
+
     def __init__(self):
         """
         Authenticator initializer. Setup the initial state of the object,
@@ -42,7 +58,9 @@ class Authenticator:
         self.backend = None
         self.config = None
         self.db = None
-        self.tokens = dict()
+        self.tokens_cache = dict()
+        self.next_db_prune_time = 0  # time when next cleaning of expired tokens must be done
+
         self.logger = logging.getLogger("nbi.authenticator")
 
     def start(self, config):
@@ -56,14 +74,6 @@ class Authenticator:
         self.config = config
 
         try:
-            if not self.backend:
-                if config["authentication"]["backend"] == "keystone":
-                    self.backend = AuthconnKeystone(self.config["authentication"])
-                elif config["authentication"]["backend"] == "internal":
-                    pass
-                else:
-                    raise AuthException("Unknown authentication backend: {}"
-                                        .format(config["authentication"]["backend"]))
             if not self.db:
                 if config["database"]["driver"] == "mongo":
                     self.db = dbmongo.DbMongo()
@@ -74,6 +84,14 @@ class Authenticator:
                 else:
                     raise AuthException("Invalid configuration param '{}' at '[database]':'driver'"
                                         .format(config["database"]["driver"]))
+            if not self.backend:
+                if config["authentication"]["backend"] == "keystone":
+                    self.backend = AuthconnKeystone(self.config["authentication"])
+                elif config["authentication"]["backend"] == "internal":
+                    self._internal_tokens_prune()
+                else:
+                    raise AuthException("Unknown authentication backend: {}"
+                                        .format(config["authentication"]["backend"]))
         except Exception as e:
             raise AuthException(str(e))
 
@@ -111,7 +129,7 @@ class Authenticator:
                     # 2. Try using session before request a new token. If not, basic authentication will generate
                     token = cherrypy.session.get("Authorization")
                     if token == "logout":
-                        token = None  # force Unauthorized response to insert user pasword again
+                        token = None  # force Unauthorized response to insert user password again
                 elif user_passwd64 and cherrypy.request.config.get("auth.allow_basic_authentication"):
                     # 3. Get new token from user password
                     user = None
@@ -129,7 +147,8 @@ class Authenticator:
             else:
                 try:
                     self.backend.validate_token(token)
-                    return self.tokens[token]
+                    # TODO: check if this can be avoided. Backend may provide enough information
+                    return self.tokens_cache[token]
                 except AuthException:
                     self.del_token(token)
                     raise
@@ -184,7 +203,8 @@ class Authenticator:
             elif remote.ip:
                 new_session["remote_host"] = remote.ip
 
-            self.tokens[token] = new_session
+            # TODO: check if this can be avoided. Backend may provide enough information
+            self.tokens_cache[token] = new_session
 
             return deepcopy(new_session)
 
@@ -192,14 +212,16 @@ class Authenticator:
         if self.config["authentication"]["backend"] == "internal":
             return self._internal_get_token_list(session)
         else:
-            return [deepcopy(token) for token in self.tokens.values()
+            # TODO: check if this can be avoided. Backend may provide enough information
+            return [deepcopy(token) for token in self.tokens_cache.values()
                     if token["username"] == session["username"]]
 
     def get_token(self, session, token):
         if self.config["authentication"]["backend"] == "internal":
             return self._internal_get_token(session, token)
         else:
-            token_value = self.tokens.get(token)
+            # TODO: check if this can be avoided. Backend may provide enough information
+            token_value = self.tokens_cache.get(token)
             if not token_value:
                 raise AuthException("token not found", http_code=HTTPStatus.NOT_FOUND)
             if token_value["username"] != session["username"] and not session["admin"]:
@@ -212,23 +234,36 @@ class Authenticator:
         else:
             try:
                 self.backend.revoke_token(token)
-                del self.tokens[token]
+                del self.tokens_cache[token]
                 return "token '{}' deleted".format(token)
             except KeyError:
                 raise AuthException("Token '{}' not found".format(token), http_code=HTTPStatus.NOT_FOUND)
 
-    def _internal_authorize(self, token):
+    def _internal_authorize(self, token_id):
         try:
-            if not token:
+            if not token_id:
                 raise AuthException("Needed a token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
-            if token not in self.tokens:
-                raise AuthException("Invalid token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
-            session = self.tokens[token]
+            # try to get from cache first
             now = time()
+            session = self.tokens_cache.get(token_id)
+            if session and session["expires"] < now:
+                del self.tokens_cache[token_id]
+                session = None
+            if session:
+                return session
+
+            # get from database if not in cache
+            session = self.db.get_one("tokens", {"_id": token_id})
             if session["expires"] < now:
-                del self.tokens[token]
                 raise AuthException("Expired Token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
+            self.tokens_cache[token_id] = session
             return session
+        except DbException as e:
+            if e.http_code == HTTPStatus.NOT_FOUND:
+                raise AuthException("Invalid Token or Authorization http header", http_code=HTTPStatus.UNAUTHORIZED)
+            else:
+                raise
+
         except AuthException:
             if self.config["global"].get("test.user_not_authorized"):
                 return {"id": "fake-token-id-for-test",
@@ -244,7 +279,6 @@ class Authenticator:
         # Try using username/password
         if indata.get("username"):
             user_rows = self.db.get_list("users", {"username": indata.get("username")})
-            user_content = None
             if user_rows:
                 user_content = user_rows[0]
                 salt = user_content["_admin"]["salt"]
@@ -285,18 +319,19 @@ class Authenticator:
         elif remote.ip:
             new_session["remote_host"] = remote.ip
 
-        self.tokens[token_id] = new_session
+        self.tokens_cache[token_id] = new_session
+        self.db.create("tokens", new_session)
+        # check if database must be prune
+        self._internal_tokens_prune(now)
         return deepcopy(new_session)
 
     def _internal_get_token_list(self, session):
-        token_list = []
-        for token_id, token_value in self.tokens.items():
-            if token_value["username"] == session["username"]:
-                token_list.append(deepcopy(token_value))
+        now = time()
+        token_list = self.db.get_list("tokens", {"username": session["username"], "expires.gt": now})
         return token_list
 
     def _internal_get_token(self, session, token_id):
-        token_value = self.tokens.get(token_id)
+        token_value = self.db.get_one("tokens", {"_id": token_id}, fail_on_empty=False)
         if not token_value:
             raise AuthException("token not found", http_code=HTTPStatus.NOT_FOUND)
         if token_value["username"] != session["username"] and not session["admin"]:
@@ -305,7 +340,18 @@ class Authenticator:
 
     def _internal_del_token(self, token_id):
         try:
-            del self.tokens[token_id]
+            self.tokens_cache.pop(token_id, None)
+            self.db.del_one("tokens", {"_id": token_id})
             return "token '{}' deleted".format(token_id)
-        except KeyError:
-            raise AuthException("Token '{}' not found".format(token_id), http_code=HTTPStatus.NOT_FOUND)
+        except DbException as e:
+            if e.http_code == HTTPStatus.NOT_FOUND:
+                raise AuthException("Token '{}' not found".format(token_id), http_code=HTTPStatus.NOT_FOUND)
+            else:
+                raise
+
+    def _internal_tokens_prune(self, now=None):
+        now = now or time()
+        if not self.next_db_prune_time or self.next_db_prune_time >= now:
+            self.db.del_list("tokens", {"expires.lt": now})
+            self.next_db_prune_time = self.periodin_db_pruning + now
+            self.tokens_cache.clear()   # force to reload tokens from database
