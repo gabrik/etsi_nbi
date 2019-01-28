@@ -27,6 +27,7 @@ import sys
 from authconn import AuthException
 from auth import Authenticator
 from engine import Engine, EngineException
+from subscriptions import SubscriptionThread
 from validation import ValidationError
 from osm_common.dbbase import DbException
 from osm_common.fsbase import FsException
@@ -41,6 +42,9 @@ __version__ = "0.1.3"
 version_date = "Jan 2019"
 database_version = '1.0'
 auth_database_version = '1.0'
+nbi_server = None           # instance of Server class
+subscription_thread = None  # instance of SubscriptionThread class
+
 
 """
 North Bound Interface  (O: OSM specific; 5,X: SOL005 not implemented yet; O5: SOL005 implemented)
@@ -904,6 +908,8 @@ def _start_service():
     Set database, storage, message configuration
     Init database with admin/admin user password
     """
+    global nbi_server
+    global subscription_thread
     cherrypy.log.error("Starting osm_nbi")
     # update general cherrypy configuration
     update_dict = {}
@@ -988,6 +994,11 @@ def _start_service():
     cherrypy.tree.apps['/osm'].root.engine.init_db(target_version=database_version)
     cherrypy.tree.apps['/osm'].root.authenticator.init_db(target_version=auth_database_version)
 
+    # start subscriptions thread:
+    subscription_thread = SubscriptionThread(config=engine_config, engine=nbi_server.engine)
+    subscription_thread.start()
+    # Do not capture except SubscriptionException
+
     # load and print version. Ignore possible errors, e.g. file not found
     try:
         with open("{}/version".format(engine_config["/static"]['tools.staticdir.dir'])) as version_file:
@@ -1002,11 +1013,15 @@ def _stop_service():
     Callback function called when cherrypy.engine stops
     TODO: Ending database connections.
     """
+    global subscription_thread
+    subscription_thread.terminate()
+    subscription_thread = None
     cherrypy.tree.apps['/osm'].root.engine.stop()
     cherrypy.log.error("Stopping osm_nbi")
 
 
 def nbi(config_file):
+    global nbi_server
     # conf = {
     #     '/': {
     #         #'request.dispatch': cherrypy.dispatch.MethodDispatcher(),
@@ -1024,9 +1039,10 @@ def nbi(config_file):
     # cherrypy.config.update({'tools.auth_basic.on': True,
     #    'tools.auth_basic.realm': 'localhost',
     #    'tools.auth_basic.checkpassword': validate_password})
+    nbi_server = Server()
     cherrypy.engine.subscribe('start', _start_service)
     cherrypy.engine.subscribe('stop', _stop_service)
-    cherrypy.quickstart(Server(), '/osm', config_file)
+    cherrypy.quickstart(nbi_server, '/osm', config_file)
 
 
 def usage():

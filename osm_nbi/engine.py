@@ -28,7 +28,7 @@ from os import urandom
 from threading import Lock
 
 __author__ = "Alfonso Tierno <alfonso.tiernosepulveda@telefonica.com>"
-min_common_version = "0.1.8"
+min_common_version = "0.1.16"
 
 
 class Engine(object):
@@ -98,7 +98,7 @@ class Engine(object):
                     self.msg.connect(config["message"])
                 else:
                     raise EngineException("Invalid configuration param '{}' at '[message]':'driver'".format(
-                        config["storage"]["driver"]))
+                        config["message"]["driver"]))
 
             self.write_lock = Lock()
             # create one class per topic
@@ -113,8 +113,8 @@ class Engine(object):
                 self.db.db_disconnect()
             if self.fs:
                 self.fs.fs_disconnect()
-            if self.fs:
-                self.fs.fs_disconnect()
+            if self.msg:
+                self.msg.disconnect()
             self.write_lock = None
         except (DbException, FsException, MsgException) as e:
             raise EngineException(str(e), http_code=e.http_code)

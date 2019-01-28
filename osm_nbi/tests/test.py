@@ -1002,6 +1002,29 @@ class TestDeployHackfestCirros(TestDeploy):
         self.users = {'1': "cirros", '2': "cirros"}
         self.passwords = {'1': "cubswin:)", '2': "cubswin:)"}
 
+    def terminate(self, engine):
+        # Make a delete in one step, overriding the normal two step of TestDeploy that launched terminate and delete
+        if test_osm:
+            engine.test("Terminate and delete NS in one step", "DELETE", "/nslcm/v1/ns_instances_content/{}".
+                        format(self.ns_id), headers_yaml, None, 202, None, "yaml")
+
+            engine .wait_until_delete("/nslcm/v1/ns_instances/{}".format(self.ns_id), timeout_deploy)
+        else:
+            engine.test("Delete NS with FORCE", "DELETE", "/nslcm/v1/ns_instances/{}?FORCE=True".format(self.ns_id),
+                        headers_yaml, None, 204, None, 0)
+
+        # check all it is deleted
+        engine.test("Check NS is deleted", "GET", "/nslcm/v1/ns_instances/{}".format(self.ns_id), headers_yaml, None,
+                    404, None, "yaml")
+        r = engine.test("Check NSLCMOPs are deleted", "GET",
+                        "/nslcm/v1/ns_lcm_op_occs?nsInstanceId={}".format(self.ns_id), headers_json, None,
+                        200, None, "json")
+        if not r:
+            return
+        nslcmops = r.json()
+        if not isinstance(nslcmops, list) or nslcmops:
+            raise TestException("NS {} deleted but with ns_lcm_op_occ active: {}".format(self.ns_id, nslcmops))
+
 
 class TestDeployHackfest1(TestDeploy):
     description = "Load and deploy Hackfest_1_vnfd example"
@@ -1168,52 +1191,49 @@ class TestDeployHackfest4(TestDeploy):
         self.commands = {'1': ['ls -lrt', ], '2': ['ls -lrt', ]}
         self.users = {'1': "ubuntu", '2': "ubuntu"}
         self.passwords = {'1': "osm4u", '2': "osm4u"}
-
-    def create_descriptors(self, engine):
-        super().create_descriptors(engine)
         # Modify VNFD to add scaling
-        self.descriptor_edit = {
-            "vnfd0": {
-                'vnf-configuration': {
-                    'config-primitive': [{
-                        'name': 'touch',
-                        'parameter': [{
-                            'name': 'filename',
-                            'data-type': 'STRING',
-                            'default-value': '/home/ubuntu/touched'
-                        }]
-                    }]
-                },
-                'scaling-group-descriptor': [{
-                    'name': 'scale_dataVM',
-                    'scaling-policy': [{
-                        'threshold-time': 0,
-                        'name': 'auto_cpu_util_above_threshold',
-                        'scaling-type': 'automatic',
-                        'scaling-criteria': [{
-                            'name': 'cpu_util_above_threshold',
-                            'vnf-monitoring-param-ref': 'all_aaa_cpu_util',
-                            'scale-out-relational-operation': 'GE',
-                            'scale-in-threshold': 15,
-                            'scale-out-threshold': 60,
-                            'scale-in-relational-operation': 'LE'
-                        }],
-                        'cooldown-time': 60
-                    }],
-                    'max-instance-count': 10,
-                    'scaling-config-action': [
-                        {'vnf-config-primitive-name-ref': 'touch',
-                         'trigger': 'post-scale-out'},
-                        {'vnf-config-primitive-name-ref': 'touch',
-                         'trigger': 'pre-scale-in'}
-                    ],
-                    'vdu': [{
-                        'vdu-id-ref': 'dataVM',
-                        'count': 1
-                    }]
-                }]
-            }
-        }
+        # self.descriptor_edit = {
+        #     "vnfd0": {
+        #         'vnf-configuration': {
+        #             'config-primitive': [{
+        #                 'name': 'touch',
+        #                 'parameter': [{
+        #                     'name': 'filename',
+        #                     'data-type': 'STRING',
+        #                     'default-value': '/home/ubuntu/touched'
+        #                 }]
+        #             }]
+        #         },
+        #         'scaling-group-descriptor': [{
+        #             'name': 'scale_dataVM',
+        #             'scaling-policy': [{
+        #                 'threshold-time': 0,
+        #                 'name': 'auto_cpu_util_above_threshold',
+        #                 'scaling-type': 'automatic',
+        #                 'scaling-criteria': [{
+        #                     'name': 'cpu_util_above_threshold',
+        #                     'vnf-monitoring-param-ref': 'all_aaa_cpu_util',
+        #                     'scale-out-relational-operation': 'GE',
+        #                     'scale-in-threshold': 15,
+        #                     'scale-out-threshold': 60,
+        #                     'scale-in-relational-operation': 'LE'
+        #                 }],
+        #                 'cooldown-time': 60
+        #             }],
+        #             'max-instance-count': 10,
+        #             'scaling-config-action': [
+        #                 {'vnf-config-primitive-name-ref': 'touch',
+        #                  'trigger': 'post-scale-out'},
+        #                 {'vnf-config-primitive-name-ref': 'touch',
+        #                  'trigger': 'pre-scale-in'}
+        #             ],
+        #             'vdu': [{
+        #                 'vdu-id-ref': 'dataVM',
+        #                 'count': 1
+        #             }]
+        #         }]
+        #     }
+        # }
 
 
 class TestDeployHackfest3Charmed(TestDeploy):
