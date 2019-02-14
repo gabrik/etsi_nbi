@@ -57,7 +57,8 @@ setup(
         'jsonschema',
         'PyYAML',
         'osm-im',
-        'python-keystoneclient'
+        'python-keystoneclient',
+        'requests'
     ],
     setup_requires=['setuptools-version-command'],
 )
