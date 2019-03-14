@@ -300,7 +300,7 @@ vim_account_new_schema = {
         "description": description_schema,
         "vim": name_schema,
         "datacenter": name_schema,
-        "vim_type": {"enum": ["openstack", "openvim", "vmware", "opennebula", "aws"]},
+        "vim_type": {"enum": ["openstack", "openvim", "vmware", "opennebula", "aws", "fos"]},
         "vim_url": description_schema,
         # "vim_url_admin": description_schema,
         # "vim_tenant": name_schema,
