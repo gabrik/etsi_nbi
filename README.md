@@ -15,10 +15,10 @@ You need docker in order to build che docker image for the RO
   	$ git clone https://github.com/gabrik/etsi_nbi
   	$ git -C etsi_nbi checkout v4-city
   	$ sg docker -c "docker build ~/etsi_nbi  -f ~/etsi_nbi/Dockerfile.local -t dockercity/nbi --no-cache"
-  	
-  	
+
+
 Then if you have a running OSM installation on docker you have to edit the
-file `/etc/osm/docker/docker-compose.yaml` and update the image for the RO
+file `/etc/osm/docker/docker-compose.yaml` and update the image for the NBI
 
 	nbi:
    	  image: dockercity/nbi
