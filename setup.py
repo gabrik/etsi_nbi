@@ -8,7 +8,7 @@ _name = "osm_nbi"
 here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, 'osm_nbi/html_public/version')) as version_file:
     VERSION = version_file.readline().strip()
-with open(os.path.join(here, 'README.rst')) as readme_file:
+with open(os.path.join(here, 'README.md')) as readme_file:
     README = readme_file.read()
 
 setup(
