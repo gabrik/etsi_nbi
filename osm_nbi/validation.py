@@ -376,7 +376,7 @@ vim_account_new_schema = {
         "description": description_schema,
         "vim": name_schema,
         "datacenter": name_schema,
-        "vim_type": {"enum": ["openstack", "openvim", "vmware", "opennebula", "aws"]},
+        "vim_type": {"enum": ["openstack", "openvim", "vmware", "opennebula", "aws", "fos"]},
         "vim_url": description_schema,
         # "vim_url_admin": description_schema,
         # "vim_tenant": name_schema,
@@ -661,7 +661,7 @@ nsi_vld_instantiate = {
         "vim-network-id": {"OneOf": [string_schema, object_schema]},
         "ip-profile": object_schema,
     },
-    "required": ["name"], 
+    "required": ["name"],
     "additionalProperties": False
 }
 
@@ -698,7 +698,7 @@ nsi_action = {
 }
 
 nsi_terminate = {
-    
+
 }
 
 
